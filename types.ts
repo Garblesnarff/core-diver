@@ -24,7 +24,6 @@ export interface PlayerUpgrades {
   visionLevel: number;
 }
 
-// Optimized to match Texture Atlas indices directly
 export enum TileType {
   EMPTY = -1,
   DIRT_SOFT = 0,
@@ -33,10 +32,10 @@ export enum TileType {
   ORE_COPPER = 3,
   ORE_LITHIUM = 4,
   ICE = 5,
-  BEDROCK = 6
+  BEDROCK = 6,
+  BOULDER = 7 // New Tile Type
 }
 
-// Events dispatched from Phaser to React
 export const EVENTS = {
   STATS_UPDATE: 'core-diver-stats-update',
   GAME_OVER: 'core-diver-game-over',

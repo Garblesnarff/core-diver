@@ -4,8 +4,7 @@ import { TileType } from '../../types';
 
 export class Player extends Phaser.Physics.Arcade.Sprite {
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys;
-  private isDigging: boolean = false;
-  private digTimer: number = 0;
+  private wasd: any; // Keys
   private lastFacing: 'left' | 'right' | 'up' | 'down' = 'right';
   public light: Phaser.GameObjects.Light;
   private moveSpeed: number;
@@ -34,6 +33,12 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
 
     if (scene.input.keyboard) {
         this.cursors = scene.input.keyboard.createCursorKeys();
+        this.wasd = scene.input.keyboard.addKeys({
+            up: Phaser.Input.Keyboard.KeyCodes.W,
+            down: Phaser.Input.Keyboard.KeyCodes.S,
+            left: Phaser.Input.Keyboard.KeyCodes.A,
+            right: Phaser.Input.Keyboard.KeyCodes.D
+        });
     }
 
     // Add Light
@@ -60,36 +65,44 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     let dx = 0;
     let dy = 0;
 
-    if (this.cursors.left.isDown) {
+    // Check both Arrow keys and WASD
+    const left = this.cursors.left.isDown || this.wasd.left.isDown;
+    const right = this.cursors.right.isDown || this.wasd.right.isDown;
+    const up = this.cursors.up.isDown || this.wasd.up.isDown;
+    const down = this.cursors.down.isDown || this.wasd.down.isDown;
+
+    if (left) {
       dx = -1;
       this.lastFacing = 'left';
-    } else if (this.cursors.right.isDown) {
+    } else if (right) {
       dx = 1;
       this.lastFacing = 'right';
-    } else if (this.cursors.up.isDown) {
+    } else if (up) {
       dy = -1;
       this.lastFacing = 'up';
-    } else if (this.cursors.down.isDown) {
+    } else if (down) {
       dy = 1;
       this.lastFacing = 'down';
     }
 
     // Digging Logic
     if (dx !== 0 || dy !== 0) {
-      // Predict next position
-      const nextX = this.x + (dx * 16); // Check half a tile ahead
-      const nextY = this.y + (dy * 16);
+      // Look ahead based on player size + margin
+      // We check the "leading edge" of the player
+      const checkDistance = 14; // Approx half width + 2px
+      const nextX = this.x + (dx * checkDistance); 
+      const nextY = this.y + (dy * checkDistance);
 
       const tile = layer.getTileAtWorldXY(nextX, nextY);
 
-      if (tile) {
-        // Tile exists, we are digging
+      if (tile && tile.index !== TileType.EMPTY) {
+        // Tile exists and is solid
         if (this.canDig(tile)) {
-           // Slow down while digging
+           // Slow down while digging (resistance)
            body.setVelocity(dx * (speed * 0.5), dy * (speed * 0.5));
            this.processDigging(tile, layer, time);
         } else {
-           // Hard rock, stop
+           // Hard rock / Bedrock, stop
            body.setVelocity(0);
         }
       } else {
@@ -109,7 +122,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   }
 
   private canDig(tile: Phaser.Tilemaps.Tile): boolean {
-    // Bedrock cannot be dug
+    // Bedrock cannot be dug. 
     return tile.index !== TileType.BEDROCK;
   }
 
@@ -126,6 +139,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
         tint: tile.tint
     });
     emitter.explode(5);
+    (this.scene as any).events.emit('play-sound', 'dig');
 
     // If Ore, collect it
     if (tile.index === TileType.ORE_COPPER || tile.index === TileType.ORE_LITHIUM || tile.index === TileType.ICE) {
