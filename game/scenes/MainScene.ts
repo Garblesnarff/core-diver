@@ -80,8 +80,10 @@ export class MainScene extends Phaser.Scene {
     // Clear start area (Safety Box)
     const startTileX = Math.floor(startX / TILE_SIZE);
     const startTileY = Math.floor(startY / TILE_SIZE);
-    for(let lx = -1; lx <= 1; lx++) {
-        for(let ly = -1; ly <= 1; ly++) {
+    
+    // We remove tiles 3x3 around spawn
+    for(let lx = -2; lx <= 2; lx++) {
+        for(let ly = -2; ly <= 2; ly++) {
             this.layer.removeTileAt(startTileX + lx, startTileY + ly);
         }
     }
@@ -101,6 +103,8 @@ export class MainScene extends Phaser.Scene {
     this.input.keyboard!.on('keydown-SPACE', this.fireBeam, this);
     this.events.on('play-sound', (key: string) => {
         if(key === 'fire') this.soundManager.playShoot();
+        if(key === 'dig') this.soundManager.playDig();
+        if(key === 'fire-breath') this.soundManager.playShoot(); // Reuse
     });
     this.events.on('player-damage', (amount: number) => {
         this.stats.health -= amount;
@@ -120,9 +124,7 @@ export class MainScene extends Phaser.Scene {
     this.spawnEntities();
 
     // Physics
-    // CRITICAL FIX: Do NOT collide player with layer, let Player.ts handle digging/collision manually.
-    // this.physics.add.collider(this.player, this.layer); 
-    
+    // Enemies and boulders collide with walls
     this.physics.add.collider(this.enemies, this.layer);
     this.physics.add.collider(this.fygars, this.layer);
     this.physics.add.collider(this.boulders, this.layer); 
@@ -135,8 +137,10 @@ export class MainScene extends Phaser.Scene {
     this.physics.add.overlap(this.beams, this.fygars, this.handleBeamHit, undefined, this);
     
     // Player collisions
-    this.physics.add.collider(this.player, this.enemies, this.handlePlayerHit, undefined, this);
-    this.physics.add.collider(this.player, this.fygars, this.handlePlayerHit, undefined, this);
+    // Changed to OVERLAP to prevent physics vibration/jitter when touching enemies
+    this.physics.add.overlap(this.player, this.enemies, this.handlePlayerHit, undefined, this);
+    this.physics.add.overlap(this.player, this.fygars, this.handlePlayerHit, undefined, this);
+    
     this.physics.add.overlap(this.boulders, this.enemies, this.handleBoulderCrush, undefined, this);
     this.physics.add.overlap(this.boulders, this.fygars, this.handleBoulderCrush, undefined, this);
     
@@ -252,8 +256,17 @@ export class MainScene extends Phaser.Scene {
   }
 
   private spawnEntities() {
+      // Safety zone radius (tiles)
+      const safeX = this.map.widthInPixels / 2 / TILE_SIZE;
+      const safeY = 3;
+      const safeRadius = 5;
+
       // Iterate tiles to replace Boulders and spawn enemies
       this.layer.forEachTile((tile) => {
+          // Check safety distance
+          const dist = Phaser.Math.Distance.Between(tile.x, tile.y, safeX, safeY);
+          if (dist < safeRadius) return;
+
           if (tile.index === TileType.BOULDER) {
               // Replace tile with Sprite
               const b = new Boulder(this, tile.getCenterX(), tile.getCenterY() - 16, this.soundManager);
@@ -365,7 +378,10 @@ export class MainScene extends Phaser.Scene {
 
       const beam = this.beams.create(this.player.x + offset.x, this.player.y + offset.y, facing === 'up' || facing === 'down' ? 'beam_v' : 'beam_h');
       beam.setVelocity(velocity.x, velocity.y);
-      beam.setLifespan(300);
+      
+      this.time.delayedCall(300, () => {
+          if (beam.active) beam.destroy();
+      });
   }
 
   private handleBeamHit(beam: any, enemy: any) {
@@ -395,8 +411,18 @@ export class MainScene extends Phaser.Scene {
       if (this.isGameOver) return;
       if (enemy.getData('inflation') > 50) return;
       const p = player as Phaser.Physics.Arcade.Sprite;
-      p.setVelocity(p.x < enemy.x ? -200 : 200, -200);
-      this.events.emit('player-damage', 1);
+      // Simple knockback - can be annoying if stuck
+      // p.setVelocity(p.x < enemy.x ? -200 : 200, -200); 
+      
+      // Using overlap now, so just damage
+      // Add cooldown
+      if (!p.getData('hitCooldown')) {
+          p.setData('hitCooldown', true);
+          this.events.emit('player-damage', 1);
+          p.setTint(0xff0000);
+          this.time.delayedCall(200, () => p.clearTint());
+          this.time.delayedCall(1000, () => p.setData('hitCooldown', false));
+      }
   }
 
   private handleBoulderHit(player: any, boulder: any) {
