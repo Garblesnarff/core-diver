@@ -41,8 +41,20 @@ export const GAME_CONFIG = {
   height: window.innerHeight,
   gravity: 0, // Top down
   playerSpeed: 160,
-  oxygenDepletionRate: 0.5, // Per second
+  oxygenDepletionRate: 0.8, // Per second (more pressure to find ice)
   digSpeed: 200, // ms per tile
 };
 
 export const TILE_SIZE = 32;
+
+// Tile hardness - number of hits to break
+export const TILE_HARDNESS: { [key: number]: number } = {
+  0: 2,  // DIRT_SOFT - 2 hits
+  1: 4,  // DIRT_HARD - 4 hits
+  2: 6,  // STONE - 6 hits
+  3: 4,  // ORE_COPPER - 4 hits
+  4: 4,  // ORE_LITHIUM - 4 hits
+  5: 2,  // ICE - 2 hits
+  6: 999, // BEDROCK - unbreakable
+  7: 1,  // BOULDER - handled separately
+};

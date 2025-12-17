@@ -46,7 +46,9 @@ const App: React.FC = () => {
     maxOxygen: 100,
     depth: 0,
     health: 3,
-    resources: { shards: 0, minerals: 0 }
+    resources: { shards: 0, minerals: 0 },
+    powerCells: 0,
+    powerCellsRequired: 3
   });
   const [deathReason, setDeathReason] = useState<string>('');
   const [isLoaded, setIsLoaded] = useState(false);
@@ -169,6 +171,33 @@ const App: React.FC = () => {
                 <div className="text-center">
                   <div className="label-tech text-neon-pink mb-1">MINERALS</div>
                   <div className="value-display text-2xl text-neon-pink">{stats.resources.minerals}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Power Cells Indicator */}
+            <div
+              className={`holo-panel p-3 animate-slide-right ${stats.powerCells >= stats.powerCellsRequired ? 'holo-panel-green' : ''}`}
+              style={{ animationDelay: '0.25s', borderColor: stats.powerCells >= stats.powerCellsRequired ? '#4ade80' : '#fbbf24' }}
+            >
+              <div className="flex items-center gap-3">
+                <div className="flex gap-1">
+                  {[...Array(stats.powerCellsRequired)].map((_, i) => (
+                    <div
+                      key={i}
+                      className={`w-4 h-6 rounded-sm transition-all ${
+                        i < stats.powerCells
+                          ? 'bg-yellow-400 shadow-lg shadow-yellow-400/50'
+                          : 'bg-white/20 border border-white/30'
+                      }`}
+                    />
+                  ))}
+                </div>
+                <div>
+                  <div className="label-tech text-yellow-400 text-xs">POWER CELLS</div>
+                  <div className={`font-mono text-sm font-bold ${stats.powerCells >= stats.powerCellsRequired ? 'text-green-400' : 'text-yellow-400'}`}>
+                    {stats.powerCells}/{stats.powerCellsRequired}
+                  </div>
                 </div>
               </div>
             </div>

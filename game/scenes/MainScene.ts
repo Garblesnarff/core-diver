@@ -27,7 +27,9 @@ export class MainScene extends Phaser.Scene {
     maxOxygen: 100,
     depth: 0,
     health: 3,
-    resources: { shards: 0, minerals: 0 }
+    resources: { shards: 0, minerals: 0 },
+    powerCells: 0,
+    powerCellsRequired: 3
   };
   private oxygenTimer!: Phaser.Time.TimerEvent;
   private enemies!: Phaser.Physics.Arcade.Group;
@@ -35,6 +37,8 @@ export class MainScene extends Phaser.Scene {
   private boulders!: Phaser.Physics.Arcade.Group;
   private beams!: Phaser.Physics.Arcade.Group;
   private artifact!: Phaser.Physics.Arcade.Sprite;
+  private powerCells!: Phaser.Physics.Arcade.Group;
+  private artifactLocked: boolean = true;
   private isGameOver: boolean = false;
   
   private upgrades: PlayerUpgrades = { oxygenLevel: 1, drillLevel: 1, speedLevel: 1, visionLevel: 1 };
@@ -60,18 +64,29 @@ export class MainScene extends Phaser.Scene {
     
     // Apply upgrades
     const maxO2 = 100 + ((this.upgrades.oxygenLevel - 1) * 25);
+    const requiredCells = 3;
     this.stats = {
       oxygen: maxO2,
       maxOxygen: maxO2,
       depth: 0,
       health: 3,
-      resources: { shards: 0, minerals: 0 }
+      resources: { shards: 0, minerals: 0 },
+      powerCells: 0,
+      powerCellsRequired: requiredCells
     };
+    this.artifactLocked = true;
 
     this.cameras.main.setBackgroundColor(COLORS.background);
 
     // Enhanced lighting setup - darker ambient for more dramatic effect
     this.lights.enable().setAmbientColor(0x222233);
+
+    // Groups - must be created before generateLevel() since power cells are spawned there
+    this.enemies = this.physics.add.group();
+    this.fygars = this.physics.add.group();
+    this.boulders = this.physics.add.group();
+    this.beams = this.physics.add.group();
+    this.powerCells = this.physics.add.group();
 
     this.generateLevel();
 
@@ -119,12 +134,6 @@ export class MainScene extends Phaser.Scene {
         if(this.stats.health <= 0) this.handleDeath("Killed by Hazard");
     });
 
-    // Groups
-    this.enemies = this.physics.add.group();
-    this.fygars = this.physics.add.group();
-    this.boulders = this.physics.add.group();
-    this.beams = this.physics.add.group();
-    
     // Process map for entities
     this.spawnEntities();
 
@@ -150,6 +159,7 @@ export class MainScene extends Phaser.Scene {
     this.physics.add.overlap(this.boulders, this.fygars, this.handleBoulderCrush, undefined, this);
     
     this.physics.add.overlap(this.player, this.artifact, this.handleVictory, undefined, this);
+    this.physics.add.overlap(this.player, this.powerCells, this.handlePowerCellCollect, undefined, this);
 
     // Timers
     this.oxygenTimer = this.time.addEvent({
@@ -168,8 +178,9 @@ export class MainScene extends Phaser.Scene {
     this.events.on('collect-ore', (type: number) => {
         this.soundManager.playCollect();
         if (type === TileType.ICE) {
-            this.stats.oxygen = Math.min(this.stats.oxygen + 20, this.stats.maxOxygen);
-            const txt = this.add.text(this.player.x, this.player.y - 20, '+O2', { 
+            const o2Gain = 25; // More valuable ice
+            this.stats.oxygen = Math.min(this.stats.oxygen + o2Gain, this.stats.maxOxygen);
+            const txt = this.add.text(this.player.x, this.player.y - 20, `+${o2Gain} O2`, {
                 fontSize: '16px', color: '#a5f3fc', fontStyle: 'bold'
             }).setOrigin(0.5);
             this.tweens.add({ targets: txt, y: txt.y - 30, alpha: 0, duration: 800, onComplete: () => txt.destroy() });
@@ -206,9 +217,16 @@ export class MainScene extends Phaser.Scene {
 
   private generateLevel() {
     const width = 40;
-    const height = 100 + (this.difficulty * 20);
+    const height = 150 + (this.difficulty * 30); // Deeper maps
     const mapData: number[][] = [];
-    
+
+    // Pre-calculate stone band positions (horizontal barriers)
+    const stoneBands: number[] = [];
+    for (let i = 1; i <= 4 + this.difficulty; i++) {
+        const bandY = Math.floor((height / (5 + this.difficulty)) * i) + Phaser.Math.Between(-3, 3);
+        stoneBands.push(bandY);
+    }
+
     // Init explored array
     for(let y=0; y<height; y++) {
         this.exploredTiles[y] = [];
@@ -221,23 +239,40 @@ export class MainScene extends Phaser.Scene {
         let biome = BIOMES[0];
         for(const b of BIOMES) { if(y >= b.start) biome = b; }
 
+        // Check if this is a stone band row
+        const isInStoneBand = stoneBands.some(bandY => Math.abs(y - bandY) <= 1);
+
         for (let x = 0; x < width; x++) {
             if (y < 2) { row.push(TileType.EMPTY); continue; }
             if (x === 0 || x === width - 1 || y === height - 1) { row.push(TileType.BEDROCK); continue; }
             if (y > height - 10 && x > (width/2 - 4) && x < (width/2 + 4)) { row.push(TileType.EMPTY); continue; }
 
             const noise = Math.random();
-            // Generation logic per biome
             let tile = TileType.EMPTY;
-            
-            if (noise > 0.94) tile = TileType.ORE_LITHIUM;
-            else if (noise > 0.88) tile = TileType.ORE_COPPER;
-            else if (noise > 0.80 && biome.name === 'FROZEN DEPTHS') tile = TileType.ICE; // More ice in frozen
-            else if (noise > 0.85 && biome.name !== 'FROZEN DEPTHS') tile = TileType.ICE; 
-            else if (noise > 0.65) tile = TileType.DIRT_HARD;
-            else if (noise > 0.15) tile = TileType.DIRT_SOFT;
-            else if (noise > 0.05 && noise < 0.08) tile = TileType.BOULDER; // 3% Chance of Boulder
-            
+
+            // Stone bands - mostly stone with small gaps
+            if (isInStoneBand) {
+                // Create gaps every ~8-12 tiles for alternate routes
+                const gapNoise = Math.sin(x * 0.5 + y * 0.3) * 0.5 + 0.5;
+                if (gapNoise > 0.85) {
+                    tile = TileType.DIRT_HARD; // Small gap (still 2 hits)
+                } else if (noise > 0.95) {
+                    tile = TileType.ORE_LITHIUM; // Rare ore in stone
+                } else {
+                    tile = TileType.STONE; // 3 hits to break
+                }
+            } else {
+                // Normal generation
+                if (noise > 0.94) tile = TileType.ORE_LITHIUM;
+                else if (noise > 0.88) tile = TileType.ORE_COPPER;
+                else if (noise > 0.75 && biome.name === 'FROZEN DEPTHS') tile = TileType.ICE; // More ice in frozen biome
+                else if (noise > 0.82 && biome.name !== 'FROZEN DEPTHS') tile = TileType.ICE;
+                else if (noise > 0.70) tile = TileType.DIRT_HARD;
+                else if (noise > 0.60 && y > 40) tile = TileType.STONE; // Stone clusters deeper down
+                else if (noise > 0.15) tile = TileType.DIRT_SOFT;
+                else if (noise > 0.05 && noise < 0.08) tile = TileType.BOULDER;
+            }
+
             row.push(tile);
         }
         mapData.push(row);
@@ -257,6 +292,7 @@ export class MainScene extends Phaser.Scene {
 
         if (tile.index === TileType.DIRT_SOFT) tile.tint = biome.colors.soft;
         if (tile.index === TileType.DIRT_HARD) tile.tint = biome.colors.hard;
+        if (tile.index === TileType.STONE) tile.tint = 0x4a5568; // Grey stone
     });
 
     // Spawn Artifact
@@ -264,7 +300,53 @@ export class MainScene extends Phaser.Scene {
     this.artifact = this.physics.add.sprite(this.map.widthInPixels / 2, mapHeight - 100, 'artifact');
     this.artifact.setPipeline('Light2D');
     this.artifact.setImmovable(true);
+    this.artifact.setAlpha(0.3); // Locked - faded
     this.lights.addLight(this.artifact.x, this.artifact.y, 150, 0x805ad5, 2);
+
+    // Spawn Power Cells - scattered at different depths
+    const cellCount = this.stats.powerCellsRequired;
+    const mapWidth = this.map.widthInPixels;
+    const sectionHeight = (mapHeight - 200) / cellCount; // Divide map into sections
+
+    for (let i = 0; i < cellCount; i++) {
+      // Each cell in a different horizontal third and vertical section
+      const sectionY = 150 + (sectionHeight * i) + Phaser.Math.Between(50, sectionHeight - 50);
+      const sectionX = ((mapWidth / 3) * (i % 3)) + Phaser.Math.Between(80, (mapWidth / 3) - 80);
+
+      const cell = this.powerCells.create(sectionX, sectionY, 'power_cell');
+      cell.setPipeline('Light2D');
+      cell.setImmovable(true);
+
+      // Add pulsing light
+      const cellLight = this.lights.addLight(sectionX, sectionY, 100, 0xfbbf24, 1.5);
+      this.tweens.add({
+        targets: cellLight,
+        intensity: { from: 1.0, to: 2.0 },
+        duration: 1000,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+      });
+
+      // Floating animation
+      this.tweens.add({
+        targets: cell,
+        y: cell.y - 5,
+        duration: 1500,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+      });
+
+      // Clear tiles around power cell
+      const cellTileX = Math.floor(sectionX / TILE_SIZE);
+      const cellTileY = Math.floor(sectionY / TILE_SIZE);
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          this.layer.removeTileAt(cellTileX + dx, cellTileY + dy);
+        }
+      }
+    }
   }
 
   private spawnEntities() {
@@ -336,6 +418,14 @@ export class MainScene extends Phaser.Scene {
       });
       this.fygars.children.iterate((e: any) => {
           if (e.active) this.minimapGraphics.fillCircle(x + e.x * scaleX, y + e.y * scaleY, 2);
+          return true;
+      });
+
+      // Draw Power Cells (pulsing orange)
+      const pulseAlpha = 0.6 + Math.sin(this.time.now / 200) * 0.4;
+      this.minimapGraphics.fillStyle(0xfbbf24, pulseAlpha);
+      this.powerCells.children.iterate((c: any) => {
+          if (c.active) this.minimapGraphics.fillCircle(x + c.x * scaleX, y + c.y * scaleY, 3);
           return true;
       });
   }
@@ -463,6 +553,68 @@ export class MainScene extends Phaser.Scene {
       }
   }
 
+  private handlePowerCellCollect(player: any, cell: any) {
+      this.soundManager.playCollect();
+
+      // Visual feedback
+      this.add.particles(0, 0, 'particle', {
+        x: cell.x, y: cell.y, speed: 150, color: [0xfbbf24, 0xfde047, 0xffffff], lifespan: 600
+      }).explode(25);
+
+      cell.destroy();
+      this.stats.powerCells++;
+      this.updateReactStats();
+
+      // Show collection text
+      const txt = this.add.text(player.x, player.y - 30,
+        `POWER CELL ${this.stats.powerCells}/${this.stats.powerCellsRequired}`, {
+        fontSize: '14px',
+        color: '#fbbf24',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 3
+      }).setOrigin(0.5);
+      this.tweens.add({ targets: txt, y: txt.y - 40, alpha: 0, duration: 1500, onComplete: () => txt.destroy() });
+
+      // Camera flash
+      this.cameras.main.flash(200, 251, 191, 36, false);
+
+      // Check if all cells collected
+      if (this.stats.powerCells >= this.stats.powerCellsRequired) {
+        this.artifactLocked = false;
+        this.artifact.setAlpha(1);
+
+        // Big notification
+        const unlockTxt = this.add.text(this.cameras.main.scrollX + GAME_CONFIG.width / 2,
+          this.cameras.main.scrollY + GAME_CONFIG.height / 2 - 50,
+          'ARTIFACT UNLOCKED!', {
+          fontSize: '32px',
+          color: '#805ad5',
+          fontStyle: 'bold',
+          stroke: '#000000',
+          strokeThickness: 4
+        }).setOrigin(0.5).setScrollFactor(0).setDepth(200);
+
+        this.tweens.add({
+          targets: unlockTxt,
+          scale: { from: 0.5, to: 1.2 },
+          alpha: { from: 1, to: 0 },
+          duration: 2000,
+          ease: 'Back.out',
+          onComplete: () => unlockTxt.destroy()
+        });
+
+        // Intensify artifact glow
+        this.tweens.add({
+          targets: this.artifact,
+          scale: { from: 1, to: 1.3 },
+          duration: 500,
+          yoyo: true,
+          repeat: 2
+        });
+      }
+  }
+
   private handleDeath(reason: string) {
       if (this.isGameOver) return;
       this.isGameOver = true;
@@ -472,6 +624,26 @@ export class MainScene extends Phaser.Scene {
 
   private handleVictory(player: any, artifact: any) {
       if (this.isGameOver) return;
+
+      // Check if artifact is still locked
+      if (this.artifactLocked) {
+        // Show "locked" feedback - only once per second
+        if (!player.getData('lockedMsgCooldown')) {
+          player.setData('lockedMsgCooldown', true);
+          const lockTxt = this.add.text(artifact.x, artifact.y - 40,
+            `NEED ${this.stats.powerCellsRequired - this.stats.powerCells} MORE POWER CELLS`, {
+            fontSize: '12px',
+            color: '#ff6b6b',
+            fontStyle: 'bold',
+            stroke: '#000000',
+            strokeThickness: 2
+          }).setOrigin(0.5);
+          this.tweens.add({ targets: lockTxt, y: lockTxt.y - 20, alpha: 0, duration: 1000, onComplete: () => lockTxt.destroy() });
+          this.time.delayedCall(1000, () => player.setData('lockedMsgCooldown', false));
+        }
+        return;
+      }
+
       this.isGameOver = true;
       this.cameras.main.flash(1000, 255, 255, 255);
       this.tweens.add({ targets: artifact, scale: 3, alpha: 0, duration: 2000 });

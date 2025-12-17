@@ -15,6 +15,8 @@ export interface GameStats {
     minerals: number;
   };
   health: number;
+  powerCells: number;
+  powerCellsRequired: number;
 }
 
 export interface PlayerUpgrades {

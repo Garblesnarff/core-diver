@@ -56,6 +56,7 @@ export class AssetGenerator {
     this.createParticleTexture(scene);
     this.createBeamTextures(scene);
     this.createArtifactTexture(scene);
+    this.createPowerCellTexture(scene);
 
     // Generate the tileset bitmap
     this.createTilesetBitmap(scene);
@@ -586,6 +587,49 @@ export class AssetGenerator {
     gfx.fillCircle(42, 42, 2);
 
     gfx.generateTexture('artifact', 64, 64);
+  }
+
+  private static createPowerCellTexture(scene: Phaser.Scene) {
+    const gfx = scene.make.graphics({ x: 0, y: 0, add: false });
+
+    // Outer glow - electric yellow
+    gfx.fillStyle(0xfbbf24, 0.3);
+    gfx.fillCircle(16, 16, 14);
+
+    // Battery body outline
+    gfx.fillStyle(0x374151);
+    gfx.fillRoundedRect(6, 4, 20, 24, 3);
+
+    // Battery terminal (top nub)
+    gfx.fillStyle(0x6b7280);
+    gfx.fillRoundedRect(11, 1, 10, 4, 1);
+
+    // Inner energy glow
+    gfx.fillStyle(0xfbbf24, 0.6);
+    gfx.fillRoundedRect(8, 6, 16, 20, 2);
+
+    // Energy core - bright yellow
+    gfx.fillStyle(0xfde047);
+    gfx.fillRoundedRect(10, 8, 12, 16, 1);
+
+    // Lightning bolt symbol
+    gfx.fillStyle(0x000000, 0.8);
+    gfx.beginPath();
+    gfx.moveTo(18, 8);
+    gfx.lineTo(13, 15);
+    gfx.lineTo(16, 15);
+    gfx.lineTo(14, 24);
+    gfx.lineTo(19, 16);
+    gfx.lineTo(16, 16);
+    gfx.closePath();
+    gfx.fillPath();
+
+    // Sparkle highlights
+    gfx.fillStyle(0xffffff, 0.9);
+    gfx.fillCircle(12, 10, 1.5);
+    gfx.fillCircle(20, 18, 1);
+
+    gfx.generateTexture('power_cell', TILE_SIZE, TILE_SIZE);
   }
 
   // ========== TILESET BITMAP ==========

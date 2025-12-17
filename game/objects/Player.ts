@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { GAME_CONFIG, TILE_SIZE } from '../../constants';
+import { GAME_CONFIG, TILE_SIZE, TILE_HARDNESS } from '../../constants';
 import { TileType } from '../../types';
 
 export class Player extends Phaser.Physics.Arcade.Sprite {
@@ -9,6 +9,11 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   public light: Phaser.GameObjects.Light;
   private moveSpeed: number;
   private _scene: Phaser.Scene; // Explicit scene reference
+
+  // Tile damage tracking
+  private tileDamage: Map<string, number> = new Map();
+  private lastDigTime: number = 0;
+  private digCooldown: number = 150; // ms between dig hits
 
   // Use declare for properties initialized by Phaser
   declare public body: Phaser.Physics.Arcade.Body;
@@ -111,9 +116,13 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
 
       if (tile && tile.index !== TileType.EMPTY) {
         if (this.canDig(tile)) {
-           // Resistance
-           this.body.setVelocity(dx * (speed * 0.5), dy * (speed * 0.5));
-           this.processDigging(tile, layer, time);
+           // Stop movement while digging - can't pass until tile is destroyed
+           this.body.setVelocity(0);
+           const tileDestroyed = this.processDigging(tile, layer, time);
+           // Only allow movement if tile was just destroyed
+           if (tileDestroyed) {
+             this.body.setVelocity(dx * speed, dy * speed);
+           }
         } else {
            // Bedrock or other obstacle
            this.body.setVelocity(0);
@@ -136,26 +145,75 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     return tile.index !== TileType.BEDROCK;
   }
 
-  private processDigging(tile: Phaser.Tilemaps.Tile, layer: Phaser.Tilemaps.TilemapLayer, time: number) {
-    // Use _scene to guarantee access
-    if (this._scene) {
-        const emitter = this._scene.add.particles(tile.getCenterX(), tile.getCenterY(), 'particle', {
-            speed: { min: 50, max: 100 },
-            scale: { start: 0.5, end: 0 },
-            lifespan: 300,
-            quantity: 5,
-            tint: tile.tint
-        });
-        emitter.explode(5);
-        this._scene.events.emit('play-sound', 'dig');
-        
+  private processDigging(tile: Phaser.Tilemaps.Tile, layer: Phaser.Tilemaps.TilemapLayer, time: number): boolean {
+    if (!this._scene) return false;
+
+    // Check dig cooldown
+    if (time - this.lastDigTime < this.digCooldown) return false;
+    this.lastDigTime = time;
+
+    // Get tile hardness
+    const hardness = TILE_HARDNESS[tile.index] ?? 1;
+    const tileKey = `${tile.x},${tile.y}`;
+
+    // Get current damage (hits taken)
+    let currentDamage = this.tileDamage.get(tileKey) || 0;
+    currentDamage++;
+
+    // Particle effect (smaller when just damaging)
+    const particleCount = currentDamage >= hardness ? 8 : 3;
+    const emitter = this._scene.add.particles(tile.getCenterX(), tile.getCenterY(), 'particle', {
+        speed: { min: 50, max: 100 },
+        scale: { start: 0.5, end: 0 },
+        lifespan: 300,
+        quantity: particleCount,
+        tint: tile.tint
+    });
+    emitter.explode(particleCount);
+    this._scene.events.emit('play-sound', 'dig');
+
+    if (currentDamage >= hardness) {
+        // Tile is broken - remove it
+        this.tileDamage.delete(tileKey);
+
         // If Ore, collect it
         if (tile.index === TileType.ORE_COPPER || tile.index === TileType.ORE_LITHIUM || tile.index === TileType.ICE) {
             this._scene.events.emit('collect-ore', tile.index);
         }
+
+        layer.removeTileAt(tile.x, tile.y);
+        return true; // Tile was destroyed
+    } else {
+        // Tile is damaged but not broken - update damage tracking
+        this.tileDamage.set(tileKey, currentDamage);
+
+        // Visual feedback - darken tile and add cracks overlay
+        const damagePercent = currentDamage / hardness;
+        tile.setAlpha(1 - (damagePercent * 0.4)); // Fade slightly as damaged
+
+        // Screen shake on hard materials
+        if (hardness >= 2) {
+            this._scene.cameras.main.shake(50, 0.002);
+        }
+
+        // Show damage indicator
+        const dmgText = this._scene.add.text(tile.getCenterX(), tile.getCenterY() - 10,
+            `${hardness - currentDamage}`, {
+            fontSize: '12px',
+            color: '#ffffff',
+            fontStyle: 'bold',
+            stroke: '#000000',
+            strokeThickness: 2
+        }).setOrigin(0.5);
+        this._scene.tweens.add({
+            targets: dmgText,
+            y: dmgText.y - 15,
+            alpha: 0,
+            duration: 400,
+            onComplete: () => dmgText.destroy()
+        });
+        return false; // Tile still exists
     }
-    
-    layer.removeTileAt(tile.x, tile.y);
   }
 
   public getFacing() {
