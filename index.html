@@ -5,25 +5,38 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CORE DIVER</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/styles.css" />
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              'void': '#030308',
+              'abyss': { deep: '#0a0a1a', mid: '#12122a', surface: '#1a1a3a' },
+              'neon': {
+                cyan: '#00f5ff',
+                pink: '#ff2d95',
+                orange: '#ff6b35',
+                green: '#39ff14',
+                purple: '#bf5fff'
+              },
+              'holo': { blue: '#4fc3f7' }
+            },
+            fontFamily: {
+              'display': ['Orbitron', 'sans-serif'],
+              'ui': ['Rajdhani', 'sans-serif'],
+              'mono': ['JetBrains Mono', 'monospace']
+            }
+          }
+        }
+      }
+    </script>
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700;900&display=swap');
-      body {
-        font-family: 'Outfit', sans-serif;
-        background-color: #0f172a;
-        overflow: hidden;
-        user-select: none;
-      }
-      /* Custom scrollbar for webkit */
-      ::-webkit-scrollbar {
-        width: 8px;
-      }
-      ::-webkit-scrollbar-track {
-        background: #1e293b; 
-      }
-      ::-webkit-scrollbar-thumb {
-        background: #475569; 
-        border-radius: 4px;
-      }
+      /* Custom scrollbar */
+      ::-webkit-scrollbar { width: 6px; }
+      ::-webkit-scrollbar-track { background: #0a0a1a; }
+      ::-webkit-scrollbar-thumb { background: #00f5ff40; border-radius: 3px; }
+      ::-webkit-scrollbar-thumb:hover { background: #00f5ff60; }
     </style>
   <script type="importmap">
 {
@@ -38,5 +51,6 @@
 </head>
   <body>
     <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
   </body>
 </html>

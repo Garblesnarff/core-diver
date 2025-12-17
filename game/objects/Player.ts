@@ -25,18 +25,21 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     scene.add.existing(this);
     scene.physics.add.existing(this);
 
+    // Apply Light2D pipeline to match tilemap lighting
+    this.setPipeline('Light2D');
+
     this.body.setCollideWorldBounds(true);
     (this as any).setOrigin(0.5, 0.5);
     this.body.setSize(24, 24); 
 
-    if (scene.input && scene.input.keyboard) {
-        this.cursors = scene.input.keyboard.createCursorKeys();
-        this.wasd = scene.input.keyboard.addKeys({
-            up: Phaser.Input.Keyboard.KeyCodes.W,
-            down: Phaser.Input.Keyboard.KeyCodes.S,
-            left: Phaser.Input.Keyboard.KeyCodes.A,
-            right: Phaser.Input.Keyboard.KeyCodes.D
-        }) as any;
+    // Initialize input - with fallback for delayed keyboard availability
+    this.initializeInput();
+
+    // Fallback: If input wasn't ready, try again on first update
+    if (!this.cursors || !this.wasd) {
+      scene.events.once('update', () => {
+        this.initializeInput();
+      });
     }
 
     // Add Light
@@ -45,6 +48,18 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
 
   public setMoveSpeed(speed: number) {
       this.moveSpeed = speed;
+  }
+
+  private initializeInput() {
+    if (this._scene.input && this._scene.input.keyboard && !this.cursors) {
+      this.cursors = this._scene.input.keyboard.createCursorKeys();
+      this.wasd = this._scene.input.keyboard.addKeys({
+        up: Phaser.Input.Keyboard.KeyCodes.W,
+        down: Phaser.Input.Keyboard.KeyCodes.S,
+        left: Phaser.Input.Keyboard.KeyCodes.A,
+        right: Phaser.Input.Keyboard.KeyCodes.D
+      }) as any;
+    }
   }
 
   preUpdate(time: number, delta: number) {
@@ -58,7 +73,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     if (!this.active) return;
 
     const speed = this.moveSpeed;
-    
+
     this.body.setVelocity(0);
 
     let dx = 0;

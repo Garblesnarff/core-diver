@@ -69,9 +69,14 @@ export class MainScene extends Phaser.Scene {
     };
 
     this.cameras.main.setBackgroundColor(COLORS.background);
-    this.lights.enable().setAmbientColor(0x555555);
+
+    // Enhanced lighting setup - darker ambient for more dramatic effect
+    this.lights.enable().setAmbientColor(0x222233);
 
     this.generateLevel();
+
+    // Add atmospheric ambient particles
+    this.createAtmosphericEffects();
 
     // Spawn player
     const startX = (this.map.widthInPixels / 2);
@@ -181,8 +186,14 @@ export class MainScene extends Phaser.Scene {
 
     this.player.update(time, delta, this.layer);
     this.updateEnemies();
-    this.boulders.children.iterate((b) => (b as Boulder).update(time, delta, this.layer));
-    this.fygars.children.iterate((f) => (f as Fygar).update(time, delta));
+    this.boulders.children.iterate((b) => {
+      if (b && b.active) (b as Boulder).update(time, delta, this.layer);
+      return true;
+    });
+    this.fygars.children.iterate((f) => {
+      if (f && f.active) (f as Fygar).update(time, delta);
+      return true;
+    });
     
     const currentDepth = Math.floor(this.player.y / TILE_SIZE);
     if (currentDepth !== this.stats.depth) {
@@ -251,6 +262,7 @@ export class MainScene extends Phaser.Scene {
     // Spawn Artifact
     const mapHeight = this.map.heightInPixels;
     this.artifact = this.physics.add.sprite(this.map.widthInPixels / 2, mapHeight - 100, 'artifact');
+    this.artifact.setPipeline('Light2D');
     this.artifact.setImmovable(true);
     this.lights.addLight(this.artifact.x, this.artifact.y, 150, 0x805ad5, 2);
   }
@@ -281,7 +293,7 @@ export class MainScene extends Phaser.Scene {
                       this.fygars.add(f);
                   } else {
                     const enemy = this.enemies.create(tile.getCenterX(), tile.getCenterY(), 'enemy');
-                    enemy.setTint(COLORS.enemy.pooka);
+                    enemy.setPipeline('Light2D');
                     enemy.setVelocity(Phaser.Math.Between(-30, 30), 0);
                     enemy.setBounce(1);
                     enemy.setCollideWorldBounds(true);
@@ -346,19 +358,21 @@ export class MainScene extends Phaser.Scene {
           if(!enemy.active) return true;
           if (enemy.body?.blocked.left) enemy.setVelocityX(30);
           else if (enemy.body?.blocked.right) enemy.setVelocityX(-30);
-          
+
           let inflation = enemy.getData('inflation') || 0;
           if (inflation > 0) {
               inflation -= 0.2;
               enemy.setData('inflation', inflation);
               enemy.setScale(1 + (inflation / 100));
+              // Flash effect when inflated
               if (inflation > 20) {
-                  enemy.setTint(0xffffff);
-                  if (Math.floor(this.time.now / 100) % 2 === 0) enemy.setTint(COLORS.enemy.inflated);
-              } else enemy.setTint(COLORS.enemy.inflated);
+                  if (Math.floor(this.time.now / 100) % 2 === 0) enemy.setAlpha(0.6);
+                  else enemy.setAlpha(1);
+              } else {
+                  enemy.setAlpha(0.8);
+              }
           } else {
-              enemy.clearTint();
-              enemy.setTint(COLORS.enemy.pooka);
+              enemy.setAlpha(1);
               enemy.setScale(1);
           }
           return true;
@@ -377,10 +391,15 @@ export class MainScene extends Phaser.Scene {
       else if (facing === 'down') { velocity.y = 400; offset.y = 20; }
 
       const beam = this.beams.create(this.player.x + offset.x, this.player.y + offset.y, facing === 'up' || facing === 'down' ? 'beam_v' : 'beam_h');
+      beam.setPipeline('Light2D');
       beam.setVelocity(velocity.x, velocity.y);
-      
+
+      // Add a light to the beam
+      const beamLight = this.lights.addLight(beam.x, beam.y, 60, 0x4fd1c5, 1.5);
+
       this.time.delayedCall(300, () => {
           if (beam.active) beam.destroy();
+          beamLight.setIntensity(0);
       });
   }
 
@@ -465,5 +484,49 @@ export class MainScene extends Phaser.Scene {
 
   private updateReactStats() {
       window.dispatchEvent(new CustomEvent(EVENTS.STATS_UPDATE, { detail: this.stats }));
+  }
+
+  private createAtmosphericEffects() {
+    // Floating dust particles throughout the level
+    const mapWidth = this.map.widthInPixels;
+    const mapHeight = this.map.heightInPixels;
+
+    // Create ambient dust particles
+    const dustEmitter = this.add.particles(0, 0, 'particle', {
+      x: { min: 0, max: mapWidth },
+      y: { min: 0, max: mapHeight },
+      scale: { start: 0.3, end: 0.1 },
+      alpha: { start: 0.3, end: 0 },
+      speed: { min: 5, max: 20 },
+      angle: { min: 250, max: 290 },
+      lifespan: { min: 4000, max: 8000 },
+      frequency: 200,
+      quantity: 1,
+      tint: [0x4a90d9, 0x7dd3fc, 0x38b2ac],
+      blendMode: 'ADD'
+    });
+    dustEmitter.setDepth(-1);
+
+    // Add some static ambient lights for ores/atmosphere
+    // These will be scattered around to give depth
+    const numAmbientLights = 8;
+    const lightColors = [0x38b2ac, 0xd53f8c, 0x7dd3fc, 0x805ad5];
+
+    for (let i = 0; i < numAmbientLights; i++) {
+      const x = Phaser.Math.Between(100, mapWidth - 100);
+      const y = Phaser.Math.Between(200, mapHeight - 200);
+      const color = Phaser.Math.RND.pick(lightColors);
+      const light = this.lights.addLight(x, y, 150, color, 0.5);
+
+      // Subtle pulsing animation for ambient lights
+      this.tweens.add({
+        targets: light,
+        intensity: { from: 0.3, to: 0.6 },
+        duration: Phaser.Math.Between(2000, 4000),
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+      });
+    }
   }
 }

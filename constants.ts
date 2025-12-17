@@ -1,31 +1,31 @@
-// Astroneer-inspired Palette
+// Abyssal Neon Palette
 export const COLORS = {
-  background: 0x1a1625, // Dark Purple Void
+  background: 0x030308, // Void black - deep space
   soil: {
-    soft: 0x63b3ed, // Light Blue soil
-    hard: 0x4299e1, // Darker Blue soil
-    stone: 0x2d3748, // Dark Grey
-    ice: 0xa5f3fc, // Cyan/White for Oxygen
+    soft: 0x4a90d9, // Soft blue soil
+    hard: 0x3d7bc7, // Harder blue soil
+    stone: 0x3d4852, // Grey stone
+    ice: 0x7dd3fc, // Crystalline ice
   },
   ore: {
-    copper: 0x38b2ac, // Teal
-    lithium: 0xd53f8c, // Pink
+    copper: 0x38b2ac, // Teal glow
+    lithium: 0xd53f8c, // Pink crystals
   },
   player: {
-    body: 0xf6ad55, // Orange
-    visor: 0x90cdf4, // Light Blue
-    light: 0xffffaa,
+    body: 0xf97316, // Bright orange
+    visor: 0x38bdf8, // Cyan visor
+    light: 0x7dd3fc, // Soft cyan light
   },
   enemy: {
-    pooka: 0xf56565, // Red
-    fygar: 0xed8936, // Orange (Fygar)
-    inflated: 0xfeb2b2, // Light Red
+    pooka: 0xef4444, // Red blob
+    fygar: 0xf97316, // Orange dragon
+    inflated: 0xfca5a5, // Light red when inflating
   },
   ui: {
-    primary: '#f6ad55',
-    secondary: '#4fd1c5',
-    danger: '#fc8181',
-    dark: '#1a202c'
+    primary: '#f97316',
+    secondary: '#00f5ff',
+    danger: '#ff1744',
+    dark: '#030308'
   }
 };
 

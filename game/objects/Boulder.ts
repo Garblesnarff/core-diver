@@ -23,7 +23,10 @@ export class Boulder extends Phaser.Physics.Arcade.Sprite {
         
         scene.add.existing(this);
         scene.physics.add.existing(this);
-        
+
+        // Apply Light2D pipeline
+        this.setPipeline('Light2D');
+
         (this as any).setOrigin(0, 0);
         this.body.setSize(30, 30);
         this.body.setOffset(1, 1);

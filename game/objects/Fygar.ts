@@ -21,8 +21,10 @@ export class Fygar extends Phaser.Physics.Arcade.Sprite {
         
         scene.add.existing(this);
         scene.physics.add.existing(this);
-        
-        (this as any).setTint(COLORS.enemy.fygar);
+
+        // Apply Light2D pipeline
+        this.setPipeline('Light2D');
+
         this.body.setVelocityX(20);
         this.body.setBounce(1, 1);
         this.body.setCollideWorldBounds(true);
@@ -42,14 +44,14 @@ export class Fygar extends Phaser.Physics.Arcade.Sprite {
                 this.state = 'FIRE';
                 this.stateTimer = time + 1000;
             } else {
-                if (Math.floor(time / 100) % 2 === 0) (this as any).setTint(0xff0000);
-                else (this as any).setTint(COLORS.enemy.fygar);
+                // Flash effect when preparing to fire
+                if (Math.floor(time / 100) % 2 === 0) this.setAlpha(0.7);
+                else this.setAlpha(1);
             }
         } else if (this.state === 'FIRE') {
             if (time > this.stateTimer) {
                 this.state = 'MOVE';
-                (this as any).clearTint();
-                (this as any).setTint(COLORS.enemy.fygar);
+                this.setAlpha(1);
                 this.body.setVelocityX(this.direction * 20);
             }
         }
@@ -80,11 +82,16 @@ export class Fygar extends Phaser.Physics.Arcade.Sprite {
             const fireX = this.x + (this.direction * i * 32);
             if (this._scene) {
                 const fire = this._scene.physics.add.sprite(fireX, this.y, 'fire');
+                fire.setPipeline('Light2D');
                 (fire.body as Phaser.Physics.Arcade.Body).allowGravity = false;
-                
+
+                // Add a light for the fire
+                const fireLight = this._scene.lights.addLight(fireX, this.y, 80, 0xff6b35, 1);
+
                 this._scene.physics.add.overlap(fire, this.target, (f, p) => {
                     this._scene.events.emit('player-damage', 1);
                     (f as any).destroy();
+                    fireLight.setIntensity(0);
                 });
 
                 this._scene.tweens.add({
@@ -92,7 +99,10 @@ export class Fygar extends Phaser.Physics.Arcade.Sprite {
                     alpha: 0,
                     duration: 500,
                     delay: 200,
-                    onComplete: () => fire.destroy()
+                    onComplete: () => {
+                        fire.destroy();
+                        fireLight.setIntensity(0);
+                    }
                 });
             }
         }
