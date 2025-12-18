@@ -15,8 +15,12 @@ export interface GameStats {
     minerals: number;
   };
   health: number;
+  maxHealth: number;
   powerCells: number;
   powerCellsRequired: number;
+  activePickups?: ActivePickup[];
+  dashCooldown?: number; // 0-1 representing cooldown progress (1 = ready)
+  currentBiome?: string;
 }
 
 export interface PlayerUpgrades {
@@ -24,6 +28,25 @@ export interface PlayerUpgrades {
   drillLevel: number;
   speedLevel: number;
   visionLevel: number;
+  armorLevel: number;      // +1 max health per level
+  efficiencyLevel: number; // -10% O2 drain per level
+  shardLevel: number;      // +15% shard gain per level
+}
+
+// Run pickups - temporary powerups found during dives
+export enum PickupType {
+  SPREAD_SHOT = 'spread_shot',     // Fire 3 beams in a cone
+  RAPID_FIRE = 'rapid_fire',       // 2x fire rate
+  SHIELD = 'shield',               // Block one hit
+  EMERGENCY_O2 = 'emergency_o2',   // +50 O2 when collected
+  DRILL_BOOST = 'drill_boost',     // Halve dig time temporarily
+  MAGNET = 'magnet',               // Auto-collect nearby resources (visual effect)
+}
+
+export interface ActivePickup {
+  type: PickupType;
+  duration?: number;    // ms remaining, undefined = permanent until used
+  stacks?: number;      // for stackable pickups like shield
 }
 
 export enum TileType {

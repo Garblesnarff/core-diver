@@ -3,7 +3,7 @@ import { Player } from '../objects/Player';
 import { Boulder } from '../objects/Boulder';
 import { Fygar } from '../objects/Fygar';
 import { SoundManager } from '../utils/SoundManager';
-import { EVENTS, GameStats, TileType, GameState, PlayerUpgrades } from '../../types';
+import { EVENTS, GameStats, TileType, GameState, PlayerUpgrades, PickupType, ActivePickup } from '../../types';
 import { GAME_CONFIG, COLORS, TILE_SIZE, BIOMES } from '../../constants';
 
 export class MainScene extends Phaser.Scene {
@@ -27,6 +27,7 @@ export class MainScene extends Phaser.Scene {
     maxOxygen: 100,
     depth: 0,
     health: 3,
+    maxHealth: 3,
     resources: { shards: 0, minerals: 0 },
     powerCells: 0,
     powerCellsRequired: 3
@@ -38,10 +39,16 @@ export class MainScene extends Phaser.Scene {
   private beams!: Phaser.Physics.Arcade.Group;
   private artifact!: Phaser.Physics.Arcade.Sprite;
   private powerCells!: Phaser.Physics.Arcade.Group;
+  private pickups!: Phaser.Physics.Arcade.Group;
+  private activePickups: ActivePickup[] = [];
   private artifactLocked: boolean = true;
   private isGameOver: boolean = false;
-  
-  private upgrades: PlayerUpgrades = { oxygenLevel: 1, drillLevel: 1, speedLevel: 1, visionLevel: 1 };
+  private lastFireTime: number = 0;
+  private fireCooldown: number = 400; // ms between shots
+  private currentBiome: string = 'SURFACE';
+  private biomeParticleTimer: number = 0;
+
+  private upgrades: PlayerUpgrades = { oxygenLevel: 1, drillLevel: 1, speedLevel: 1, visionLevel: 1, armorLevel: 1, efficiencyLevel: 1, shardLevel: 1 };
   private difficulty: number = 1;
   private soundManager!: SoundManager;
 
@@ -64,12 +71,14 @@ export class MainScene extends Phaser.Scene {
     
     // Apply upgrades
     const maxO2 = 100 + ((this.upgrades.oxygenLevel - 1) * 25);
+    const maxHealth = 3 + (this.upgrades.armorLevel - 1); // +1 health per armor level
     const requiredCells = 3;
     this.stats = {
       oxygen: maxO2,
       maxOxygen: maxO2,
       depth: 0,
-      health: 3,
+      health: maxHealth,
+      maxHealth: maxHealth,
       resources: { shards: 0, minerals: 0 },
       powerCells: 0,
       powerCellsRequired: requiredCells
@@ -87,6 +96,8 @@ export class MainScene extends Phaser.Scene {
     this.boulders = this.physics.add.group();
     this.beams = this.physics.add.group();
     this.powerCells = this.physics.add.group();
+    this.pickups = this.physics.add.group();
+    this.activePickups = [];
 
     this.generateLevel();
 
@@ -160,6 +171,7 @@ export class MainScene extends Phaser.Scene {
     
     this.physics.add.overlap(this.player, this.artifact, this.handleVictory, undefined, this);
     this.physics.add.overlap(this.player, this.powerCells, this.handlePowerCellCollect, undefined, this);
+    this.physics.add.overlap(this.player, this.pickups, this.handlePickupCollect, undefined, this);
 
     // Timers
     this.oxygenTimer = this.time.addEvent({
@@ -186,7 +198,7 @@ export class MainScene extends Phaser.Scene {
             this.tweens.add({ targets: txt, y: txt.y - 30, alpha: 0, duration: 800, onComplete: () => txt.destroy() });
         } else {
             this.stats.resources.minerals++;
-            this.stats.resources.shards += 5 * this.upgrades.drillLevel;
+            this.stats.resources.shards += this.calculateShards(5);
         }
         this.updateReactStats();
     });
@@ -197,6 +209,8 @@ export class MainScene extends Phaser.Scene {
 
     this.player.update(time, delta, this.layer);
     this.updateEnemies();
+    this.updatePickupDurations(delta);
+    this.updateMagnetEffect();
     this.boulders.children.iterate((b) => {
       if (b && b.active) (b as Boulder).update(time, delta, this.layer);
       return true;
@@ -211,7 +225,10 @@ export class MainScene extends Phaser.Scene {
         this.stats.depth = currentDepth;
         this.updateReactStats();
     }
-    
+
+    // Update biome and apply biome effects
+    this.updateBiomeEffects(delta);
+
     this.updateMinimap();
   }
 
@@ -347,6 +364,70 @@ export class MainScene extends Phaser.Scene {
         }
       }
     }
+
+    // Spawn pickups scattered throughout the map
+    this.spawnPickups(mapWidth, mapHeight);
+  }
+
+  private spawnPickups(mapWidth: number, mapHeight: number) {
+    const pickupTypes = [
+      { type: PickupType.SPREAD_SHOT, texture: 'pickup_spread', color: 0x818cf8 },
+      { type: PickupType.RAPID_FIRE, texture: 'pickup_rapid', color: 0xfbbf24 },
+      { type: PickupType.SHIELD, texture: 'pickup_shield', color: 0x4ade80 },
+      { type: PickupType.EMERGENCY_O2, texture: 'pickup_o2', color: 0x38bdf8 },
+      { type: PickupType.DRILL_BOOST, texture: 'pickup_drill', color: 0xf472b6 },
+      { type: PickupType.MAGNET, texture: 'pickup_magnet', color: 0xef4444 },
+    ];
+
+    // Spawn 4-6 pickups per run, scattered at different depths
+    const pickupCount = 4 + Math.floor(this.difficulty * 0.5);
+
+    for (let i = 0; i < pickupCount; i++) {
+      const pickupInfo = Phaser.Math.RND.pick(pickupTypes);
+
+      // Spread pickups throughout the map depth
+      const ySection = (mapHeight - 200) / pickupCount;
+      const y = 120 + (ySection * i) + Phaser.Math.Between(30, ySection - 30);
+      const x = Phaser.Math.Between(80, mapWidth - 80);
+
+      const pickup = this.pickups.create(x, y, pickupInfo.texture);
+      pickup.setPipeline('Light2D');
+      pickup.setData('pickupType', pickupInfo.type);
+      pickup.setImmovable(true);
+
+      // Add glow
+      const pickupLight = this.lights.addLight(x, y, 80, pickupInfo.color, 1.2);
+      pickup.setData('light', pickupLight);
+
+      // Floating animation
+      this.tweens.add({
+        targets: pickup,
+        y: pickup.y - 4,
+        duration: 1200,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+      });
+
+      // Pulsing light
+      this.tweens.add({
+        targets: pickupLight,
+        intensity: { from: 0.8, to: 1.5 },
+        duration: 800,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+      });
+
+      // Clear tiles around pickup
+      const pickupTileX = Math.floor(x / TILE_SIZE);
+      const pickupTileY = Math.floor(y / TILE_SIZE);
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          this.layer.removeTileAt(pickupTileX + dx, pickupTileY + dy);
+        }
+      }
+    }
   }
 
   private spawnEntities() {
@@ -367,10 +448,16 @@ export class MainScene extends Phaser.Scene {
               this.boulders.add(b);
               this.layer.removeTileAt(tile.x, tile.y);
           } else if (tile.index === TileType.EMPTY) {
-              // Chance to spawn enemy
-              if (Math.random() < 0.02) {
-                  // 30% chance Fygar, 70% Pooka
-                  if (Math.random() < 0.3) {
+              // Enemy spawn rate scales with depth
+              const depthFactor = Math.min(tile.y / 100, 2); // 0 to 2x at depth 100+
+              const baseSpawnChance = 0.015;
+              const spawnChance = baseSpawnChance + (depthFactor * 0.015); // 1.5% to 4.5%
+
+              if (Math.random() < spawnChance) {
+                  // Fygar ratio increases with depth (30% -> 60%)
+                  const fygarChance = 0.3 + (depthFactor * 0.15);
+
+                  if (Math.random() < fygarChance) {
                       const f = new Fygar(this, tile.getCenterX(), tile.getCenterY(), this.player);
                       this.fygars.add(f);
                   } else {
@@ -433,7 +520,21 @@ export class MainScene extends Phaser.Scene {
   private tickOxygen() {
     if (this.isGameOver) return;
     if (this.stats.oxygen > 0) {
-        this.stats.oxygen -= GAME_CONFIG.oxygenDepletionRate * 2;
+        // Efficiency reduces O2 drain by 10% per level
+        const efficiencyMult = 1 - ((this.upgrades.efficiencyLevel - 1) * 0.1);
+
+        // Biome modifier for O2 drain
+        let biomeMult = 1.0;
+        switch (this.currentBiome) {
+          case 'FROZEN DEPTHS':
+            biomeMult = 0.8; // Cold preserves oxygen better
+            break;
+          case 'CORE ZONE':
+            biomeMult = 1.5; // Heat/radiation burns through oxygen faster
+            break;
+        }
+
+        this.stats.oxygen -= GAME_CONFIG.oxygenDepletionRate * 2 * Math.max(0.3, efficiencyMult) * biomeMult;
         if (this.stats.oxygen <= 0) {
             this.stats.oxygen = 0;
             this.handleDeath("Asphyxiation");
@@ -470,27 +571,57 @@ export class MainScene extends Phaser.Scene {
   }
 
   private fireBeam() {
+      // Check fire cooldown
+      const currentTime = this.time.now;
+      const cooldown = this.hasActivePickup(PickupType.RAPID_FIRE) ? this.fireCooldown / 2 : this.fireCooldown;
+      if (currentTime - this.lastFireTime < cooldown) return;
+      this.lastFireTime = currentTime;
+
       this.soundManager.playShoot();
       const facing = this.player.getFacing();
+      const baseSpeed = 400;
+
+      // Calculate base velocity and offset
       let velocity = {x: 0, y: 0};
       let offset = {x: 0, y: 0};
 
-      if (facing === 'left') { velocity.x = -400; offset.x = -20; }
-      else if (facing === 'right') { velocity.x = 400; offset.x = 20; }
-      else if (facing === 'up') { velocity.y = -400; offset.y = -20; }
-      else if (facing === 'down') { velocity.y = 400; offset.y = 20; }
+      if (facing === 'left') { velocity.x = -baseSpeed; offset.x = -20; }
+      else if (facing === 'right') { velocity.x = baseSpeed; offset.x = 20; }
+      else if (facing === 'up') { velocity.y = -baseSpeed; offset.y = -20; }
+      else if (facing === 'down') { velocity.y = baseSpeed; offset.y = 20; }
 
-      const beam = this.beams.create(this.player.x + offset.x, this.player.y + offset.y, facing === 'up' || facing === 'down' ? 'beam_v' : 'beam_h');
-      beam.setPipeline('Light2D');
-      beam.setVelocity(velocity.x, velocity.y);
+      // Determine beam angles - spread shot fires 3 beams
+      const angles: number[] = [0]; // Center beam
+      if (this.hasActivePickup(PickupType.SPREAD_SHOT)) {
+        angles.push(-25, 25); // Side beams at 25 degrees
+      }
 
-      // Add a light to the beam
-      const beamLight = this.lights.addLight(beam.x, beam.y, 60, 0x4fd1c5, 1.5);
+      for (const angle of angles) {
+        // Rotate velocity by angle
+        const rad = angle * (Math.PI / 180);
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        const rotatedVx = velocity.x * cos - velocity.y * sin;
+        const rotatedVy = velocity.x * sin + velocity.y * cos;
 
-      this.time.delayedCall(300, () => {
-          if (beam.active) beam.destroy();
-          beamLight.setIntensity(0);
-      });
+        const beamTexture = facing === 'up' || facing === 'down' ? 'beam_v' : 'beam_h';
+        const beam = this.beams.create(this.player.x + offset.x, this.player.y + offset.y, beamTexture);
+        beam.setPipeline('Light2D');
+        beam.setVelocity(rotatedVx, rotatedVy);
+
+        // Rotate beam sprite to match direction
+        if (angle !== 0) {
+          beam.setAngle(angle);
+        }
+
+        // Add a light to the beam
+        const beamLight = this.lights.addLight(beam.x, beam.y, 60, 0x4fd1c5, 1.5);
+
+        this.time.delayedCall(300, () => {
+            if (beam.active) beam.destroy();
+            beamLight.setIntensity(0);
+        });
+      }
   }
 
   private handleBeamHit(beam: any, enemy: any) {
@@ -509,7 +640,7 @@ export class MainScene extends Phaser.Scene {
             x: e.x, y: e.y, speed: 100, color: [0xff0000, 0xffff00], lifespan: 500
           }).explode(20);
           e.destroy();
-          this.stats.resources.shards += 10 * this.upgrades.drillLevel;
+          this.stats.resources.shards += this.calculateShards(10);
           this.updateReactStats();
       } else {
           e.setData('inflation', inflation);
@@ -520,15 +651,36 @@ export class MainScene extends Phaser.Scene {
       if (this.isGameOver) return;
       if (enemy.getData('inflation') > 50) return;
       const p = player as Phaser.Physics.Arcade.Sprite;
-      // Simple knockback - can be annoying if stuck
-      // p.setVelocity(p.x < enemy.x ? -200 : 200, -200); 
-      
-      // Using overlap now, so just damage
+
       // Add cooldown
       if (!p.getData('hitCooldown')) {
           p.setData('hitCooldown', true);
-          this.events.emit('player-damage', 1);
-          p.setTint(0xff0000);
+
+          // Check for shield pickup
+          const shieldPickup = this.getActivePickup(PickupType.SHIELD);
+          if (shieldPickup && shieldPickup.stacks && shieldPickup.stacks > 0) {
+            // Shield absorbs the hit
+            shieldPickup.stacks--;
+            if (shieldPickup.stacks <= 0) {
+              // Remove shield from active pickups
+              const idx = this.activePickups.indexOf(shieldPickup);
+              if (idx > -1) this.activePickups.splice(idx, 1);
+            }
+            // Visual feedback - green flash instead of red
+            p.setTint(0x4ade80);
+            this.soundManager.playCollect();
+            // Show "BLOCKED" text
+            const txt = this.add.text(p.x, p.y - 30, 'SHIELD!', {
+              fontSize: '14px', color: '#4ade80', fontStyle: 'bold',
+              stroke: '#000000', strokeThickness: 2
+            }).setOrigin(0.5);
+            this.tweens.add({ targets: txt, y: txt.y - 20, alpha: 0, duration: 600, onComplete: () => txt.destroy() });
+          } else {
+            // Take damage normally
+            this.events.emit('player-damage', 1);
+            p.setTint(0xff0000);
+          }
+
           this.time.delayedCall(200, () => p.clearTint());
           this.time.delayedCall(1000, () => p.setData('hitCooldown', false));
       }
@@ -546,7 +698,7 @@ export class MainScene extends Phaser.Scene {
       if ((boulder.body as Phaser.Physics.Arcade.Body).velocity.y > 50) {
           this.soundManager.playPop();
           enemy.destroy();
-          this.stats.resources.shards += 25 * this.upgrades.drillLevel;
+          this.stats.resources.shards += this.calculateShards(25);
           this.updateReactStats();
           // Visual pop
           this.add.particles(0, 0, 'particle', { x: enemy.x, y: enemy.y, speed: 100, color: [0xff0000], lifespan: 500 }).explode(20);
@@ -615,6 +767,95 @@ export class MainScene extends Phaser.Scene {
       }
   }
 
+  private handlePickupCollect(player: any, pickup: any) {
+    const pickupType = pickup.getData('pickupType') as PickupType;
+    const pickupLight = pickup.getData('light');
+
+    this.soundManager.playCollect();
+
+    // Particle effect based on pickup type
+    const colorMap: { [key: string]: number[] } = {
+      [PickupType.SPREAD_SHOT]: [0x818cf8, 0xa5b4fc, 0xffffff],
+      [PickupType.RAPID_FIRE]: [0xfbbf24, 0xfde047, 0xffffff],
+      [PickupType.SHIELD]: [0x4ade80, 0x86efac, 0xffffff],
+      [PickupType.EMERGENCY_O2]: [0x38bdf8, 0x7dd3fc, 0xffffff],
+      [PickupType.DRILL_BOOST]: [0xf472b6, 0xf9a8d4, 0xffffff],
+      [PickupType.MAGNET]: [0xef4444, 0xfca5a5, 0xffffff],
+    };
+
+    this.add.particles(0, 0, 'particle', {
+      x: pickup.x, y: pickup.y, speed: 120, color: colorMap[pickupType] || [0xffffff], lifespan: 500
+    }).explode(20);
+
+    // Remove the light
+    if (pickupLight) {
+      pickupLight.setIntensity(0);
+    }
+
+    pickup.destroy();
+
+    // Handle different pickup types
+    let displayName = '';
+    let duration: number | undefined;
+
+    switch (pickupType) {
+      case PickupType.SPREAD_SHOT:
+        displayName = 'SPREAD SHOT';
+        duration = 15000; // 15 seconds
+        this.activePickups.push({ type: pickupType, duration });
+        break;
+
+      case PickupType.RAPID_FIRE:
+        displayName = 'RAPID FIRE';
+        duration = 12000; // 12 seconds
+        this.activePickups.push({ type: pickupType, duration });
+        break;
+
+      case PickupType.SHIELD:
+        displayName = 'SHIELD';
+        // Check if already has shield, add stack
+        const existingShield = this.activePickups.find(p => p.type === PickupType.SHIELD);
+        if (existingShield) {
+          existingShield.stacks = (existingShield.stacks || 1) + 1;
+        } else {
+          this.activePickups.push({ type: pickupType, stacks: 1 });
+        }
+        break;
+
+      case PickupType.EMERGENCY_O2:
+        displayName = '+50 OXYGEN';
+        // Immediate effect - no duration
+        this.stats.oxygen = Math.min(this.stats.oxygen + 50, this.stats.maxOxygen);
+        this.updateReactStats();
+        break;
+
+      case PickupType.DRILL_BOOST:
+        displayName = 'DRILL BOOST';
+        duration = 20000; // 20 seconds
+        this.activePickups.push({ type: pickupType, duration });
+        break;
+
+      case PickupType.MAGNET:
+        displayName = 'MAGNET';
+        duration = 25000; // 25 seconds
+        this.activePickups.push({ type: pickupType, duration });
+        break;
+    }
+
+    // Show collection text
+    const txt = this.add.text(player.x, player.y - 30, displayName, {
+      fontSize: '16px',
+      color: '#ffffff',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 3
+    }).setOrigin(0.5);
+    this.tweens.add({ targets: txt, y: txt.y - 40, alpha: 0, duration: 1200, onComplete: () => txt.destroy() });
+
+    // Camera effect
+    this.cameras.main.flash(100, 255, 255, 255, false);
+  }
+
   private handleDeath(reason: string) {
       if (this.isGameOver) return;
       this.isGameOver = true;
@@ -655,7 +896,210 @@ export class MainScene extends Phaser.Scene {
   }
 
   private updateReactStats() {
-      window.dispatchEvent(new CustomEvent(EVENTS.STATS_UPDATE, { detail: this.stats }));
+      // Calculate dash cooldown progress (0 = on cooldown, 1 = ready)
+      const dashCooldown = this.player ?
+        (this.player.canDash(this.time.now) ? 1 :
+          1 - (this.player.getDashCooldownRemaining(this.time.now) / this.player.getDashCooldownTotal())) : 1;
+
+      window.dispatchEvent(new CustomEvent(EVENTS.STATS_UPDATE, {
+        detail: {
+          ...this.stats,
+          activePickups: this.activePickups,
+          dashCooldown,
+          currentBiome: this.currentBiome
+        }
+      }));
+  }
+
+  private calculateShards(base: number): number {
+      // Apply drill level multiplier and shard bonus
+      const drillMult = this.upgrades.drillLevel;
+      const shardBonus = 1 + ((this.upgrades.shardLevel - 1) * 0.15); // +15% per level
+      return Math.floor(base * drillMult * shardBonus);
+  }
+
+  private updatePickupDurations(delta: number) {
+    // Update durations and remove expired pickups
+    for (let i = this.activePickups.length - 1; i >= 0; i--) {
+      const pickup = this.activePickups[i];
+      if (pickup.duration !== undefined) {
+        pickup.duration -= delta;
+        if (pickup.duration <= 0) {
+          this.activePickups.splice(i, 1);
+        }
+      }
+    }
+  }
+
+  private updateBiomeEffects(delta: number) {
+    // Determine current biome
+    const depth = Math.floor(this.player.y / TILE_SIZE);
+    let biome = BIOMES[0];
+    for (const b of BIOMES) {
+      if (depth >= b.start) biome = b;
+    }
+
+    // Check if biome changed
+    if (biome.name !== this.currentBiome) {
+      this.currentBiome = biome.name;
+
+      // Show biome transition notification
+      const biomeTxt = this.add.text(
+        this.cameras.main.scrollX + GAME_CONFIG.width / 2,
+        this.cameras.main.scrollY + 80,
+        `// ${biome.name} //`,
+        {
+          fontSize: '20px',
+          color: '#' + biome.colors.soft.toString(16).padStart(6, '0'),
+          fontStyle: 'bold',
+          fontFamily: 'monospace',
+          stroke: '#000000',
+          strokeThickness: 3
+        }
+      ).setOrigin(0.5).setScrollFactor(0).setDepth(150);
+
+      this.tweens.add({
+        targets: biomeTxt,
+        alpha: { from: 0, to: 1 },
+        y: biomeTxt.y + 10,
+        duration: 500,
+        yoyo: true,
+        hold: 1500,
+        onComplete: () => biomeTxt.destroy()
+      });
+    }
+
+    // Apply biome-specific gameplay modifiers
+    const baseSpeed = GAME_CONFIG.playerSpeed + ((this.upgrades.speedLevel - 1) * 20);
+
+    switch (biome.name) {
+      case 'FROZEN DEPTHS':
+        // Cold slows movement by 20%
+        this.player.setMoveSpeed(baseSpeed * 0.8);
+        break;
+      case 'CORE ZONE':
+        // Heat speeds up (but also increases O2 drain - handled in tickOxygen)
+        this.player.setMoveSpeed(baseSpeed * 1.1);
+        break;
+      default:
+        this.player.setMoveSpeed(baseSpeed);
+    }
+
+    // Biome-specific particles around player
+    this.biomeParticleTimer += delta;
+    if (this.biomeParticleTimer > 500) { // Every 500ms
+      this.biomeParticleTimer = 0;
+      this.spawnBiomeParticles(biome);
+    }
+  }
+
+  private spawnBiomeParticles(biome: typeof BIOMES[0]) {
+    const px = this.player.x;
+    const py = this.player.y;
+
+    switch (biome.name) {
+      case 'SURFACE':
+        // Dust motes
+        this.add.particles(px + Phaser.Math.Between(-50, 50), py + Phaser.Math.Between(-50, 50), 'particle', {
+          speed: { min: 5, max: 15 },
+          scale: { start: 0.2, end: 0 },
+          lifespan: 2000,
+          alpha: { start: 0.3, end: 0 },
+          tint: 0x8b7355,
+        }).explode(2);
+        break;
+
+      case 'MINERAL CAVERNS':
+        // Ember particles
+        this.add.particles(px + Phaser.Math.Between(-60, 60), py + Phaser.Math.Between(-60, 60), 'particle', {
+          speed: { min: 10, max: 30 },
+          scale: { start: 0.3, end: 0 },
+          lifespan: 1500,
+          alpha: { start: 0.6, end: 0 },
+          tint: [0xed8936, 0xfbbf24, 0xef4444],
+          blendMode: 'ADD'
+        }).explode(3);
+        break;
+
+      case 'FROZEN DEPTHS':
+        // Ice crystals / snowflakes
+        this.add.particles(px + Phaser.Math.Between(-70, 70), py - 40, 'particle', {
+          speedY: { min: 20, max: 40 },
+          speedX: { min: -10, max: 10 },
+          scale: { start: 0.25, end: 0.1 },
+          lifespan: 2500,
+          alpha: { start: 0.7, end: 0 },
+          tint: [0xa5f3fc, 0x7dd3fc, 0xffffff],
+        }).explode(4);
+        break;
+
+      case 'CORE ZONE':
+        // Radioactive/heat particles
+        this.add.particles(px + Phaser.Math.Between(-50, 50), py + Phaser.Math.Between(-50, 50), 'particle', {
+          speed: { min: 20, max: 50 },
+          scale: { start: 0.4, end: 0 },
+          lifespan: 800,
+          alpha: { start: 0.8, end: 0 },
+          tint: [0x9f7aea, 0xd53f8c, 0xf472b6],
+          blendMode: 'ADD'
+        }).explode(5);
+        break;
+    }
+  }
+
+  private updateMagnetEffect() {
+    if (!this.hasActivePickup(PickupType.MAGNET)) return;
+
+    const magnetRadius = 3; // tiles
+    const playerTileX = Math.floor(this.player.x / TILE_SIZE);
+    const playerTileY = Math.floor(this.player.y / TILE_SIZE);
+
+    // Check tiles in radius around player
+    for (let dx = -magnetRadius; dx <= magnetRadius; dx++) {
+      for (let dy = -magnetRadius; dy <= magnetRadius; dy++) {
+        const tileX = playerTileX + dx;
+        const tileY = playerTileY + dy;
+        const tile = this.layer.getTileAt(tileX, tileY);
+
+        if (tile && (tile.index === TileType.ORE_COPPER || tile.index === TileType.ORE_LITHIUM)) {
+          // Create attraction particle effect
+          const centerX = tile.getCenterX();
+          const centerY = tile.getCenterY();
+
+          // Visual: particles flying toward player
+          const color = tile.index === TileType.ORE_COPPER ? 0x22d3ee : 0xf472b6;
+          this.add.particles(0, 0, 'particle', {
+            x: centerX, y: centerY,
+            moveToX: this.player.x,
+            moveToY: this.player.y,
+            speed: 200,
+            scale: { start: 0.6, end: 0.2 },
+            lifespan: 300,
+            tint: color,
+          }).explode(5);
+
+          // Collect the ore
+          this.soundManager.playCollect();
+          this.stats.resources.minerals++;
+          this.stats.resources.shards += this.calculateShards(5);
+          this.layer.removeTileAt(tileX, tileY);
+          this.updateReactStats();
+        }
+      }
+    }
+  }
+
+  private hasActivePickup(type: PickupType): boolean {
+    return this.activePickups.some(p => p.type === type);
+  }
+
+  private getActivePickup(type: PickupType): ActivePickup | undefined {
+    return this.activePickups.find(p => p.type === type);
+  }
+
+  // Public method for Player to check drill boost status
+  public hasDrillBoost(): boolean {
+    return this.hasActivePickup(PickupType.DRILL_BOOST);
   }
 
   private createAtmosphericEffects() {

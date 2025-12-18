@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Phaser from 'phaser';
 import { createGame } from './game/CoreDiverGame';
-import { GameState, EVENTS, GameStats, PlayerUpgrades } from './types';
+import { GameState, EVENTS, GameStats, PlayerUpgrades, PickupType, ActivePickup } from './types';
 
 // Icon components
 const OxygenIcon = () => (
@@ -30,6 +30,43 @@ const VisionIcon = () => (
   </svg>
 );
 
+const ArmorIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" className="w-5 h-5">
+    <path d="M12 2L4 5v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V5l-8-3z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
+  </svg>
+);
+
+const EfficiencyIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" className="w-5 h-5">
+    <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5"/>
+    <path d="M12 6v6l4.5 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+  </svg>
+);
+
+const ShardIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" className="w-5 h-5">
+    <path d="M12 2l3 7h7l-5.5 4.5 2 7.5-6.5-4.5-6.5 4.5 2-7.5L2 9h7l3-7z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
+  </svg>
+);
+
+// Pickup display info
+const getPickupInfo = (type: PickupType): { name: string; color: string; icon: string } => {
+  switch (type) {
+    case PickupType.SPREAD_SHOT:
+      return { name: 'SPREAD', color: '#818cf8', icon: '⟪⟫' };
+    case PickupType.RAPID_FIRE:
+      return { name: 'RAPID', color: '#fbbf24', icon: '⚡' };
+    case PickupType.SHIELD:
+      return { name: 'SHIELD', color: '#4ade80', icon: '🛡' };
+    case PickupType.DRILL_BOOST:
+      return { name: 'DRILL', color: '#f472b6', icon: '⛏' };
+    case PickupType.MAGNET:
+      return { name: 'MAGNET', color: '#ef4444', icon: '⊛' };
+    default:
+      return { name: '???', color: '#ffffff', icon: '?' };
+  }
+};
+
 const App: React.FC = () => {
   const gameRef = useRef<Phaser.Game | null>(null);
   const [gameState, setGameState] = useState<GameState>(GameState.HUB);
@@ -39,13 +76,17 @@ const App: React.FC = () => {
     oxygenLevel: 1,
     drillLevel: 1,
     speedLevel: 1,
-    visionLevel: 1
+    visionLevel: 1,
+    armorLevel: 1,
+    efficiencyLevel: 1,
+    shardLevel: 1
   });
   const [stats, setStats] = useState<GameStats>({
     oxygen: 100,
     maxOxygen: 100,
     depth: 0,
     health: 3,
+    maxHealth: 3,
     resources: { shards: 0, minerals: 0 },
     powerCells: 0,
     powerCellsRequired: 3
@@ -127,35 +168,65 @@ const App: React.FC = () => {
           {/* Top HUD Bar */}
           <div className="flex justify-between items-start gap-4">
 
-            {/* Oxygen Panel */}
-            <div
-              className={`holo-panel p-4 w-64 animate-slide-left ${isLowOxygen ? 'holo-panel-orange' : ''}`}
-              style={{ animationDelay: '0.1s' }}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                  <div className={`${isLowOxygen ? 'text-neon-orange animate-pulse' : 'text-neon-cyan'}`}>
-                    <OxygenIcon />
+            {/* Left Column: Oxygen + Power Cells */}
+            <div className="flex flex-col gap-3">
+              {/* Oxygen Panel */}
+              <div
+                className={`holo-panel p-4 w-64 animate-slide-left ${isLowOxygen ? 'holo-panel-orange' : ''}`}
+                style={{ animationDelay: '0.1s' }}
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className={`${isLowOxygen ? 'text-neon-orange animate-pulse' : 'text-neon-cyan'}`}>
+                      <OxygenIcon />
+                    </div>
+                    <span className="label-tech">OXYGEN SUPPLY</span>
                   </div>
-                  <span className="label-tech">OXYGEN SUPPLY</span>
+                  <span className={`font-mono text-sm font-bold ${isLowOxygen ? 'text-neon-orange' : 'text-neon-cyan'}`}>
+                    {Math.floor(stats.oxygen)}
+                  </span>
                 </div>
-                <span className={`font-mono text-sm font-bold ${isLowOxygen ? 'text-neon-orange' : 'text-neon-cyan'}`}>
-                  {Math.floor(stats.oxygen)}
-                </span>
+
+                <div className="progress-container">
+                  <div
+                    className={`progress-bar ${isLowOxygen ? 'progress-danger' : 'progress-cyan'}`}
+                    style={{ width: `${oxygenPercent}%` }}
+                  />
+                </div>
+
+                {isLowOxygen && (
+                  <div className="mt-2 text-xs text-neon-orange font-mono animate-pulse tracking-wider">
+                    ⚠ CRITICAL LEVEL
+                  </div>
+                )}
               </div>
 
-              <div className="progress-container">
-                <div
-                  className={`progress-bar ${isLowOxygen ? 'progress-danger' : 'progress-cyan'}`}
-                  style={{ width: `${oxygenPercent}%` }}
-                />
-              </div>
-
-              {isLowOxygen && (
-                <div className="mt-2 text-xs text-neon-orange font-mono animate-pulse tracking-wider">
-                  ⚠ CRITICAL LEVEL
+              {/* Power Cells Indicator */}
+              <div
+                className={`holo-panel p-3 w-64 animate-slide-left ${stats.powerCells >= stats.powerCellsRequired ? 'holo-panel-green' : ''}`}
+                style={{ animationDelay: '0.15s', borderColor: stats.powerCells >= stats.powerCellsRequired ? '#4ade80' : '#fbbf24' }}
+              >
+                <div className="flex items-center gap-3">
+                  <div className="flex gap-1">
+                    {[...Array(stats.powerCellsRequired)].map((_, i) => (
+                      <div
+                        key={i}
+                        className={`w-4 h-6 rounded-sm transition-all ${
+                          i < stats.powerCells
+                            ? 'bg-yellow-400 shadow-lg shadow-yellow-400/50'
+                            : 'bg-white/20 border border-white/30'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                  <div>
+                    <div className="label-tech text-yellow-400 text-xs">POWER CELLS</div>
+                    <div className={`font-mono text-sm font-bold ${stats.powerCells >= stats.powerCellsRequired ? 'text-green-400' : 'text-yellow-400'}`}>
+                      {stats.powerCells}/{stats.powerCellsRequired}
+                    </div>
+                  </div>
                 </div>
-              )}
+              </div>
             </div>
 
             {/* Resources Panel */}
@@ -174,47 +245,79 @@ const App: React.FC = () => {
                 </div>
               </div>
             </div>
-
-            {/* Power Cells Indicator */}
-            <div
-              className={`holo-panel p-3 animate-slide-right ${stats.powerCells >= stats.powerCellsRequired ? 'holo-panel-green' : ''}`}
-              style={{ animationDelay: '0.25s', borderColor: stats.powerCells >= stats.powerCellsRequired ? '#4ade80' : '#fbbf24' }}
-            >
-              <div className="flex items-center gap-3">
-                <div className="flex gap-1">
-                  {[...Array(stats.powerCellsRequired)].map((_, i) => (
-                    <div
-                      key={i}
-                      className={`w-4 h-6 rounded-sm transition-all ${
-                        i < stats.powerCells
-                          ? 'bg-yellow-400 shadow-lg shadow-yellow-400/50'
-                          : 'bg-white/20 border border-white/30'
-                      }`}
-                    />
-                  ))}
-                </div>
-                <div>
-                  <div className="label-tech text-yellow-400 text-xs">POWER CELLS</div>
-                  <div className={`font-mono text-sm font-bold ${stats.powerCells >= stats.powerCellsRequired ? 'text-green-400' : 'text-yellow-400'}`}>
-                    {stats.powerCells}/{stats.powerCellsRequired}
-                  </div>
-                </div>
-              </div>
-            </div>
           </div>
 
           {/* Bottom HUD Bar */}
           <div className="absolute bottom-4 md:bottom-6 left-4 md:left-6 right-4 md:right-6 flex justify-between items-end">
 
-            {/* Health Orbs */}
-            <div className="flex gap-3 animate-float-up" style={{ animationDelay: '0.3s' }}>
-              {[...Array(3)].map((_, i) => (
-                <div
-                  key={i}
-                  className={`health-orb ${i < stats.health ? 'active' : 'empty'}`}
-                />
-              ))}
+            {/* Health Orbs + Dash Indicator */}
+            <div className="flex items-end gap-4 animate-float-up" style={{ animationDelay: '0.3s' }}>
+              {/* Health Orbs */}
+              <div className="flex gap-2">
+                {[...Array(stats.maxHealth)].map((_, i) => (
+                  <div
+                    key={i}
+                    className={`health-orb ${i < stats.health ? 'active' : 'empty'}`}
+                  />
+                ))}
+              </div>
+
+              {/* Dash Ability Indicator */}
+              <div className="holo-panel px-3 py-2 flex items-center gap-2" style={{ borderColor: stats.dashCooldown === 1 ? '#4fd1c580' : '#ffffff40' }}>
+                <span className="text-lg" style={{ color: stats.dashCooldown === 1 ? '#4fd1c5' : '#ffffff60' }}>⚡</span>
+                <div className="flex flex-col">
+                  <span className={`text-xs font-mono font-bold ${stats.dashCooldown === 1 ? 'text-neon-cyan' : 'text-white/40'}`}>
+                    DASH
+                  </span>
+                  <div className="w-10 h-1 bg-white/20 rounded overflow-hidden mt-1">
+                    <div
+                      className="h-full transition-all duration-100"
+                      style={{
+                        width: `${(stats.dashCooldown ?? 1) * 100}%`,
+                        backgroundColor: stats.dashCooldown === 1 ? '#4fd1c5' : '#888'
+                      }}
+                    />
+                  </div>
+                </div>
+                <span className="text-xs text-white/30 font-mono">[SHIFT]</span>
+              </div>
             </div>
+
+            {/* Active Pickups Display */}
+            {stats.activePickups && stats.activePickups.length > 0 && (
+              <div className="flex gap-2 animate-float-up" style={{ animationDelay: '0.35s' }}>
+                {stats.activePickups.map((pickup, idx) => {
+                  const info = getPickupInfo(pickup.type);
+                  const durationPercent = pickup.duration ? Math.min(100, (pickup.duration / 15000) * 100) : 100;
+                  return (
+                    <div
+                      key={`${pickup.type}-${idx}`}
+                      className="holo-panel px-3 py-2 flex items-center gap-2"
+                      style={{ borderColor: info.color + '80' }}
+                    >
+                      <span className="text-lg" style={{ color: info.color }}>{info.icon}</span>
+                      <div className="flex flex-col">
+                        <span className="text-xs font-mono font-bold" style={{ color: info.color }}>
+                          {info.name}
+                          {pickup.stacks && pickup.stacks > 1 ? ` x${pickup.stacks}` : ''}
+                        </span>
+                        {pickup.duration !== undefined && (
+                          <div className="w-12 h-1 bg-white/20 rounded overflow-hidden mt-1">
+                            <div
+                              className="h-full transition-all duration-200"
+                              style={{
+                                width: `${durationPercent}%`,
+                                backgroundColor: info.color
+                              }}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             {/* Depth Meter */}
             <div
@@ -413,6 +516,108 @@ const App: React.FC = () => {
                     UPGRADE — {100 * upgrades.visionLevel} SHARDS
                   </button>
                 </div>
+
+                {/* Armor Upgrade */}
+                <div
+                  className="upgrade-card armor opacity-0 animate-float-up"
+                  style={{ animationDelay: '0.8s', animationFillMode: 'forwards' }}
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-red-400/20 flex items-center justify-center text-red-400">
+                        <ArmorIcon />
+                      </div>
+                      <div>
+                        <h3 className="font-display font-bold text-red-400 tracking-wider">ARMOR PLATING</h3>
+                        <p className="text-xs text-white/50 font-ui">Reinforced hull</p>
+                      </div>
+                    </div>
+                    <div className="px-2 py-1 rounded bg-abyss-deep text-xs font-mono text-red-400">
+                      LVL {upgrades.armorLevel}
+                    </div>
+                  </div>
+                  <p className="text-sm text-white/60 mb-4 font-ui">
+                    +1 maximum health per level. Current: {2 + upgrades.armorLevel} HP
+                  </p>
+                  <button
+                    onClick={() => buyUpgrade('armorLevel')}
+                    disabled={totalShards < 100 * upgrades.armorLevel}
+                    className={`w-full py-2.5 rounded font-display text-sm tracking-wider transition-all
+                      ${totalShards >= 100 * upgrades.armorLevel
+                        ? 'bg-red-400/20 border border-red-400 text-red-400 hover:bg-red-400 hover:text-void'
+                        : 'bg-white/5 border border-white/10 text-white/30 cursor-not-allowed'}`}
+                  >
+                    UPGRADE — {100 * upgrades.armorLevel} SHARDS
+                  </button>
+                </div>
+
+                {/* O2 Efficiency Upgrade */}
+                <div
+                  className="upgrade-card efficiency opacity-0 animate-float-up"
+                  style={{ animationDelay: '0.85s', animationFillMode: 'forwards' }}
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-sky-400/20 flex items-center justify-center text-sky-400">
+                        <EfficiencyIcon />
+                      </div>
+                      <div>
+                        <h3 className="font-display font-bold text-sky-400 tracking-wider">O2 RECYCLER</h3>
+                        <p className="text-xs text-white/50 font-ui">Atmospheric processor</p>
+                      </div>
+                    </div>
+                    <div className="px-2 py-1 rounded bg-abyss-deep text-xs font-mono text-sky-400">
+                      LVL {upgrades.efficiencyLevel}
+                    </div>
+                  </div>
+                  <p className="text-sm text-white/60 mb-4 font-ui">
+                    -10% oxygen drain per level. Current: {Math.max(30, 100 - (upgrades.efficiencyLevel - 1) * 10)}%
+                  </p>
+                  <button
+                    onClick={() => buyUpgrade('efficiencyLevel')}
+                    disabled={totalShards < 100 * upgrades.efficiencyLevel}
+                    className={`w-full py-2.5 rounded font-display text-sm tracking-wider transition-all
+                      ${totalShards >= 100 * upgrades.efficiencyLevel
+                        ? 'bg-sky-400/20 border border-sky-400 text-sky-400 hover:bg-sky-400 hover:text-void'
+                        : 'bg-white/5 border border-white/10 text-white/30 cursor-not-allowed'}`}
+                  >
+                    UPGRADE — {100 * upgrades.efficiencyLevel} SHARDS
+                  </button>
+                </div>
+
+                {/* Shard Bonus Upgrade */}
+                <div
+                  className="upgrade-card shard opacity-0 animate-float-up"
+                  style={{ animationDelay: '0.9s', animationFillMode: 'forwards' }}
+                >
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg bg-yellow-400/20 flex items-center justify-center text-yellow-400">
+                        <ShardIcon />
+                      </div>
+                      <div>
+                        <h3 className="font-display font-bold text-yellow-400 tracking-wider">LUCKY STRIKE</h3>
+                        <p className="text-xs text-white/50 font-ui">Fortune amplifier</p>
+                      </div>
+                    </div>
+                    <div className="px-2 py-1 rounded bg-abyss-deep text-xs font-mono text-yellow-400">
+                      LVL {upgrades.shardLevel}
+                    </div>
+                  </div>
+                  <p className="text-sm text-white/60 mb-4 font-ui">
+                    +15% shard gain per level. Current: +{(upgrades.shardLevel - 1) * 15}%
+                  </p>
+                  <button
+                    onClick={() => buyUpgrade('shardLevel')}
+                    disabled={totalShards < 100 * upgrades.shardLevel}
+                    className={`w-full py-2.5 rounded font-display text-sm tracking-wider transition-all
+                      ${totalShards >= 100 * upgrades.shardLevel
+                        ? 'bg-yellow-400/20 border border-yellow-400 text-yellow-400 hover:bg-yellow-400 hover:text-void'
+                        : 'bg-white/5 border border-white/10 text-white/30 cursor-not-allowed'}`}
+                  >
+                    UPGRADE — {100 * upgrades.shardLevel} SHARDS
+                  </button>
+                </div>
               </div>
 
               {/* Start Button */}
@@ -427,7 +632,7 @@ const App: React.FC = () => {
               {/* Controls hint */}
               <div className="mt-6 text-center opacity-0 animate-float-up" style={{ animationDelay: '0.9s', animationFillMode: 'forwards' }}>
                 <span className="text-xs text-white/30 font-mono tracking-wider">
-                  [WASD/ARROWS] MOVE • [SPACE] FIRE BEAM
+                  [WASD/ARROWS] MOVE • [SPACE] FIRE BEAM • [SHIFT] DASH
                 </span>
               </div>
             </div>

@@ -58,6 +58,9 @@ export class AssetGenerator {
     this.createArtifactTexture(scene);
     this.createPowerCellTexture(scene);
 
+    // Generate pickup textures
+    this.createPickupTextures(scene);
+
     // Generate the tileset bitmap
     this.createTilesetBitmap(scene);
   }
@@ -630,6 +633,91 @@ export class AssetGenerator {
     gfx.fillCircle(20, 18, 1);
 
     gfx.generateTexture('power_cell', TILE_SIZE, TILE_SIZE);
+  }
+
+  private static createPickupTextures(scene: Phaser.Scene) {
+    // Spread Shot - triple arrows
+    const spread = scene.make.graphics({ x: 0, y: 0, add: false });
+    spread.fillStyle(0x818cf8, 0.3);
+    spread.fillCircle(16, 16, 14);
+    spread.fillStyle(0x818cf8);
+    spread.fillTriangle(16, 4, 10, 16, 22, 16); // Center arrow
+    spread.fillTriangle(6, 8, 2, 18, 12, 18);   // Left arrow
+    spread.fillTriangle(26, 8, 20, 18, 30, 18); // Right arrow
+    spread.fillStyle(0xffffff, 0.7);
+    spread.fillCircle(16, 10, 2);
+    spread.generateTexture('pickup_spread', TILE_SIZE, TILE_SIZE);
+
+    // Rapid Fire - double lightning
+    const rapid = scene.make.graphics({ x: 0, y: 0, add: false });
+    rapid.fillStyle(0xfbbf24, 0.3);
+    rapid.fillCircle(16, 16, 14);
+    rapid.fillStyle(0xfbbf24);
+    rapid.beginPath();
+    rapid.moveTo(14, 4); rapid.lineTo(10, 14); rapid.lineTo(14, 14);
+    rapid.lineTo(10, 26); rapid.lineTo(16, 14); rapid.lineTo(12, 14);
+    rapid.closePath();
+    rapid.fillPath();
+    rapid.beginPath();
+    rapid.moveTo(22, 4); rapid.lineTo(18, 14); rapid.lineTo(22, 14);
+    rapid.lineTo(18, 26); rapid.lineTo(24, 14); rapid.lineTo(20, 14);
+    rapid.closePath();
+    rapid.fillPath();
+    rapid.generateTexture('pickup_rapid', TILE_SIZE, TILE_SIZE);
+
+    // Shield - hexagonal barrier
+    const shield = scene.make.graphics({ x: 0, y: 0, add: false });
+    shield.fillStyle(0x4ade80, 0.3);
+    shield.fillCircle(16, 16, 14);
+    shield.lineStyle(3, 0x4ade80, 1);
+    shield.beginPath();
+    shield.moveTo(16, 4); shield.lineTo(26, 10); shield.lineTo(26, 22);
+    shield.lineTo(16, 28); shield.lineTo(6, 22); shield.lineTo(6, 10);
+    shield.closePath();
+    shield.strokePath();
+    shield.fillStyle(0x4ade80, 0.5);
+    shield.fillCircle(16, 16, 6);
+    shield.generateTexture('pickup_shield', TILE_SIZE, TILE_SIZE);
+
+    // Emergency O2 - oxygen tank
+    const o2 = scene.make.graphics({ x: 0, y: 0, add: false });
+    o2.fillStyle(0x38bdf8, 0.3);
+    o2.fillCircle(16, 16, 14);
+    o2.fillStyle(0x38bdf8);
+    o2.fillRoundedRect(10, 6, 12, 20, 4);
+    o2.fillStyle(0x0ea5e9);
+    o2.fillRoundedRect(8, 4, 6, 4, 2);
+    o2.fillStyle(0xffffff, 0.8);
+    o2.fillCircle(14, 12, 2);
+    o2.generateTexture('pickup_o2', TILE_SIZE, TILE_SIZE);
+
+    // Drill Boost - spinning drill
+    const drill = scene.make.graphics({ x: 0, y: 0, add: false });
+    drill.fillStyle(0xf472b6, 0.3);
+    drill.fillCircle(16, 16, 14);
+    drill.fillStyle(0xf472b6);
+    drill.fillTriangle(16, 2, 8, 20, 24, 20);
+    drill.fillStyle(0xffffff, 0.6);
+    drill.fillTriangle(16, 6, 12, 16, 20, 16);
+    drill.lineStyle(2, 0xf472b6, 0.8);
+    drill.strokeCircle(16, 22, 6);
+    drill.generateTexture('pickup_drill', TILE_SIZE, TILE_SIZE);
+
+    // Magnet - horseshoe magnet
+    const magnet = scene.make.graphics({ x: 0, y: 0, add: false });
+    magnet.fillStyle(0xef4444, 0.3);
+    magnet.fillCircle(16, 16, 14);
+    magnet.fillStyle(0xef4444);
+    magnet.fillRoundedRect(6, 8, 6, 16, 2);
+    magnet.fillRoundedRect(20, 8, 6, 16, 2);
+    magnet.fillStyle(0x6b7280);
+    magnet.fillRect(6, 8, 6, 6);
+    magnet.fillRect(20, 8, 6, 6);
+    magnet.lineStyle(4, 0xef4444, 1);
+    magnet.beginPath();
+    magnet.arc(16, 10, 8, Math.PI, 0, false);
+    magnet.strokePath();
+    magnet.generateTexture('pickup_magnet', TILE_SIZE, TILE_SIZE);
   }
 
   // ========== TILESET BITMAP ==========
