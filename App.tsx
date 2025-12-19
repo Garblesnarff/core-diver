@@ -168,7 +168,7 @@ const App: React.FC = () => {
           {/* Top HUD Bar */}
           <div className="flex justify-between items-start gap-4">
 
-            {/* Left Column: Oxygen + Power Cells */}
+            {/* Left Column: Oxygen + Power Cells + Resources */}
             <div className="flex flex-col gap-3">
               {/* Oxygen Panel */}
               <div
@@ -227,21 +227,21 @@ const App: React.FC = () => {
                   </div>
                 </div>
               </div>
-            </div>
 
-            {/* Resources Panel */}
-            <div
-              className="holo-panel holo-panel-pink p-4 animate-slide-right"
-              style={{ animationDelay: '0.2s' }}
-            >
-              <div className="flex gap-8">
-                <div className="text-center">
-                  <div className="label-tech text-neon-orange mb-1">SHARDS</div>
-                  <div className="value-display text-2xl text-neon-orange">{stats.resources.shards}</div>
-                </div>
-                <div className="text-center">
-                  <div className="label-tech text-neon-pink mb-1">MINERALS</div>
-                  <div className="value-display text-2xl text-neon-pink">{stats.resources.minerals}</div>
+              {/* Resources Panel */}
+              <div
+                className="holo-panel holo-panel-pink p-3 w-64 animate-slide-left"
+                style={{ animationDelay: '0.2s' }}
+              >
+                <div className="flex justify-around">
+                  <div className="text-center">
+                    <div className="label-tech text-neon-orange mb-1 text-xs">SHARDS</div>
+                    <div className="value-display text-xl text-neon-orange">{stats.resources.shards}</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="label-tech text-neon-pink mb-1 text-xs">MINERALS</div>
+                    <div className="value-display text-xl text-neon-pink">{stats.resources.minerals}</div>
+                  </div>
                 </div>
               </div>
             </div>
