@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Phaser from 'phaser';
 import { createGame } from './game/CoreDiverGame';
-import { GameState, EVENTS, GameStats, PlayerUpgrades, PickupType, ActivePickup } from './types';
+import { GameState, EVENTS, GameStats, PlayerUpgrades, PickupType, ActivePickup, SkillTreeState, SkillDefinition, SKILL_BRANCH_CONFIG, SkillBranch } from './types';
+import { SKILL_TREE_DATA, getSkillById, canUnlockSkill, getSkillConnections } from './skillTreeData';
 
 // Icon components
 const OxygenIcon = () => (
@@ -67,6 +68,22 @@ const getPickupInfo = (type: PickupType): { name: string; color: string; icon: s
   }
 };
 
+// Load skill tree state from localStorage
+const loadSkillTreeState = (): SkillTreeState => {
+  try {
+    const saved = localStorage.getItem('coreDiver_skillTree');
+    if (saved) {
+      return JSON.parse(saved);
+    }
+  } catch (e) {
+    console.error('Failed to load skill tree state:', e);
+  }
+  return { unlockedSkills: [], totalSpent: 0 };
+};
+
+// Hub tab type
+type HubTab = 'upgrades' | 'skills';
+
 const App: React.FC = () => {
   const gameRef = useRef<Phaser.Game | null>(null);
   const [gameState, setGameState] = useState<GameState>(GameState.HUB);
@@ -93,6 +110,30 @@ const App: React.FC = () => {
   });
   const [deathReason, setDeathReason] = useState<string>('');
   const [isLoaded, setIsLoaded] = useState(false);
+
+  // Skill tree state
+  const [skillTreeState, setSkillTreeState] = useState<SkillTreeState>(loadSkillTreeState);
+  const [hubTab, setHubTab] = useState<HubTab>('upgrades');
+  const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
+
+  // Save skill tree state to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem('coreDiver_skillTree', JSON.stringify(skillTreeState));
+  }, [skillTreeState]);
+
+  // Unlock a skill
+  const unlockSkill = (skillId: string) => {
+    const skill = getSkillById(skillId);
+    if (!skill) return;
+    if (!canUnlockSkill(skillId, skillTreeState.unlockedSkills)) return;
+    if (totalShards < skill.cost) return;
+
+    setTotalShards(prev => prev - skill.cost);
+    setSkillTreeState(prev => ({
+      unlockedSkills: [...prev.unlockedSkills, skillId],
+      totalSpent: prev.totalSpent + skill.cost
+    }));
+  };
 
   useEffect(() => {
     if (!gameRef.current) {
@@ -134,7 +175,7 @@ const App: React.FC = () => {
     if (gameRef.current) {
       const mainScene = gameRef.current.scene.getScene('MainScene');
       if (mainScene) {
-        mainScene.scene.restart({ upgrades, difficulty });
+        mainScene.scene.restart({ upgrades, difficulty, skillTreeState });
       }
     }
   };
@@ -281,6 +322,112 @@ const App: React.FC = () => {
                 </div>
                 <span className="text-xs text-white/30 font-mono">[SHIFT]</span>
               </div>
+
+              {/* Skill Tree Abilities */}
+              {stats.abilityCooldowns && (
+                <>
+                  {stats.abilityCooldowns.groundSlam?.has && (
+                    <div className="holo-panel px-3 py-2 flex items-center gap-2" style={{ borderColor: stats.abilityCooldowns.groundSlam.current === 0 ? '#f472b680' : '#ffffff40' }}>
+                      <span className="text-lg" style={{ color: stats.abilityCooldowns.groundSlam.current === 0 ? '#f472b6' : '#ffffff60' }}>💥</span>
+                      <div className="flex flex-col">
+                        <span className={`text-xs font-mono font-bold ${stats.abilityCooldowns.groundSlam.current === 0 ? 'text-pink-400' : 'text-white/40'}`}>
+                          SLAM
+                        </span>
+                        <div className="w-10 h-1 bg-white/20 rounded overflow-hidden mt-1">
+                          <div
+                            className="h-full transition-all duration-100"
+                            style={{
+                              width: `${100 - (stats.abilityCooldowns.groundSlam.current / stats.abilityCooldowns.groundSlam.max) * 100}%`,
+                              backgroundColor: stats.abilityCooldowns.groundSlam.current === 0 ? '#f472b6' : '#888'
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <span className="text-xs text-white/30 font-mono">[E]</span>
+                    </div>
+                  )}
+                  {stats.abilityCooldowns.proximityBombs?.has && (
+                    <div className="holo-panel px-3 py-2 flex items-center gap-2" style={{ borderColor: stats.abilityCooldowns.proximityBombs.current === 0 ? '#ef444480' : '#ffffff40' }}>
+                      <span className="text-lg" style={{ color: stats.abilityCooldowns.proximityBombs.current === 0 ? '#ef4444' : '#ffffff60' }}>💣</span>
+                      <div className="flex flex-col">
+                        <span className={`text-xs font-mono font-bold ${stats.abilityCooldowns.proximityBombs.current === 0 ? 'text-red-400' : 'text-white/40'}`}>
+                          BOMB
+                        </span>
+                        <div className="w-10 h-1 bg-white/20 rounded overflow-hidden mt-1">
+                          <div
+                            className="h-full transition-all duration-100"
+                            style={{
+                              width: `${100 - (stats.abilityCooldowns.proximityBombs.current / stats.abilityCooldowns.proximityBombs.max) * 100}%`,
+                              backgroundColor: stats.abilityCooldowns.proximityBombs.current === 0 ? '#ef4444' : '#888'
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <span className="text-xs text-white/30 font-mono">[Q]</span>
+                    </div>
+                  )}
+                  {stats.abilityCooldowns.energyBarrier?.has && (
+                    <div className="holo-panel px-3 py-2 flex items-center gap-2" style={{ borderColor: stats.abilityCooldowns.energyBarrier.current === 0 ? '#4ade8080' : '#ffffff40' }}>
+                      <span className="text-lg" style={{ color: stats.abilityCooldowns.energyBarrier.current === 0 ? '#4ade80' : '#ffffff60' }}>🛡</span>
+                      <div className="flex flex-col">
+                        <span className={`text-xs font-mono font-bold ${stats.abilityCooldowns.energyBarrier.current === 0 ? 'text-green-400' : 'text-white/40'}`}>
+                          BARRIER
+                        </span>
+                        <div className="w-10 h-1 bg-white/20 rounded overflow-hidden mt-1">
+                          <div
+                            className="h-full transition-all duration-100"
+                            style={{
+                              width: `${100 - (stats.abilityCooldowns.energyBarrier.current / stats.abilityCooldowns.energyBarrier.max) * 100}%`,
+                              backgroundColor: stats.abilityCooldowns.energyBarrier.current === 0 ? '#4ade80' : '#888'
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <span className="text-xs text-white/30 font-mono">[G]</span>
+                    </div>
+                  )}
+                  {stats.abilityCooldowns.grappleHook?.has && (
+                    <div className="holo-panel px-3 py-2 flex items-center gap-2" style={{ borderColor: stats.abilityCooldowns.grappleHook.current === 0 ? '#fbbf2480' : '#ffffff40' }}>
+                      <span className="text-lg" style={{ color: stats.abilityCooldowns.grappleHook.current === 0 ? '#fbbf24' : '#ffffff60' }}>🪝</span>
+                      <div className="flex flex-col">
+                        <span className={`text-xs font-mono font-bold ${stats.abilityCooldowns.grappleHook.current === 0 ? 'text-yellow-400' : 'text-white/40'}`}>
+                          GRAPPLE
+                        </span>
+                        <div className="w-10 h-1 bg-white/20 rounded overflow-hidden mt-1">
+                          <div
+                            className="h-full transition-all duration-100"
+                            style={{
+                              width: `${100 - (stats.abilityCooldowns.grappleHook.current / stats.abilityCooldowns.grappleHook.max) * 100}%`,
+                              backgroundColor: stats.abilityCooldowns.grappleHook.current === 0 ? '#fbbf24' : '#888'
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <span className="text-xs text-white/30 font-mono">[R]</span>
+                    </div>
+                  )}
+                  {stats.abilityCooldowns.resourceBeacon?.has && (
+                    <div className="holo-panel px-3 py-2 flex items-center gap-2" style={{ borderColor: stats.abilityCooldowns.resourceBeacon.current === 0 ? '#818cf880' : '#ffffff40' }}>
+                      <span className="text-lg" style={{ color: stats.abilityCooldowns.resourceBeacon.current === 0 ? '#818cf8' : '#ffffff60' }}>📡</span>
+                      <div className="flex flex-col">
+                        <span className={`text-xs font-mono font-bold ${stats.abilityCooldowns.resourceBeacon.current === 0 ? 'text-purple-400' : 'text-white/40'}`}>
+                          BEACON
+                        </span>
+                        <div className="w-10 h-1 bg-white/20 rounded overflow-hidden mt-1">
+                          <div
+                            className="h-full transition-all duration-100"
+                            style={{
+                              width: `${100 - (stats.abilityCooldowns.resourceBeacon.current / stats.abilityCooldowns.resourceBeacon.max) * 100}%`,
+                              backgroundColor: stats.abilityCooldowns.resourceBeacon.current === 0 ? '#818cf8' : '#888'
+                            }}
+                          />
+                        </div>
+                      </div>
+                      <span className="text-xs text-white/30 font-mono">[F]</span>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
 
             {/* Active Pickups Display */}
@@ -376,9 +523,39 @@ const App: React.FC = () => {
                     <span className="label-tech">SHARDS</span>
                   </div>
                 </div>
+
+                {/* Tab Switcher */}
+                <div className="flex justify-center gap-2 mt-6 opacity-0 animate-float-up" style={{ animationDelay: '0.35s', animationFillMode: 'forwards' }}>
+                  <button
+                    onClick={() => setHubTab('upgrades')}
+                    className={`px-6 py-2 rounded font-display text-sm tracking-wider transition-all ${
+                      hubTab === 'upgrades'
+                        ? 'bg-neon-cyan/20 border border-neon-cyan text-neon-cyan'
+                        : 'bg-white/5 border border-white/20 text-white/50 hover:text-white/80 hover:border-white/40'
+                    }`}
+                  >
+                    UPGRADES
+                  </button>
+                  <button
+                    onClick={() => { setHubTab('skills'); setSelectedSkill(null); }}
+                    className={`px-6 py-2 rounded font-display text-sm tracking-wider transition-all ${
+                      hubTab === 'skills'
+                        ? 'bg-neon-purple/20 border border-neon-purple text-neon-purple'
+                        : 'bg-white/5 border border-white/20 text-white/50 hover:text-white/80 hover:border-white/40'
+                    }`}
+                  >
+                    SKILL TREE
+                    {skillTreeState.unlockedSkills.length > 0 && (
+                      <span className="ml-2 px-1.5 py-0.5 rounded bg-neon-purple/30 text-xs">
+                        {skillTreeState.unlockedSkills.length}
+                      </span>
+                    )}
+                  </button>
+                </div>
               </div>
 
-              {/* Upgrades Grid */}
+              {/* Upgrades Grid (shown when upgrades tab is active) */}
+              {hubTab === 'upgrades' && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8 max-h-[40vh] overflow-y-auto pr-2">
 
                 {/* Oxygen Upgrade */}
@@ -619,6 +796,211 @@ const App: React.FC = () => {
                   </button>
                 </div>
               </div>
+              )}
+
+              {/* Skill Tree View (shown when skills tab is active) */}
+              {hubTab === 'skills' && (
+                <div className="mb-8">
+                  <div className="flex gap-4">
+                    {/* Skill Tree Canvas */}
+                    <div className="flex-1 holo-panel p-4 relative overflow-hidden" style={{ minHeight: '400px' }}>
+                      {/* SVG for connections */}
+                      <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 0 }}>
+                        <g transform="translate(50%, 50%)" style={{ transform: 'translate(50%, 50%)' }}>
+                          {getSkillConnections().map(({ from, to }) => {
+                            const fromSkill = getSkillById(from);
+                            const toSkill = getSkillById(to);
+                            if (!fromSkill || !toSkill) return null;
+                            const isActive = skillTreeState.unlockedSkills.includes(from) && skillTreeState.unlockedSkills.includes(to);
+                            const branchColor = SKILL_BRANCH_CONFIG[toSkill.branch].color;
+                            return (
+                              <line
+                                key={`${from}-${to}`}
+                                x1={fromSkill.position.x}
+                                y1={fromSkill.position.y}
+                                x2={toSkill.position.x}
+                                y2={toSkill.position.y}
+                                stroke={branchColor}
+                                strokeWidth={isActive ? 2 : 1}
+                                opacity={isActive ? 0.8 : 0.2}
+                                className="transition-all duration-300"
+                              />
+                            );
+                          })}
+                        </g>
+                      </svg>
+
+                      {/* Skill Nodes */}
+                      <div className="relative w-full h-full" style={{ minHeight: '400px' }}>
+                        {/* Center point */}
+                        <div
+                          className="absolute w-12 h-12 rounded-full bg-gradient-to-br from-neon-cyan to-neon-purple border-2 border-white/50 flex items-center justify-center"
+                          style={{ left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }}
+                        >
+                          <span className="text-lg font-bold">C</span>
+                        </div>
+
+                        {/* Branch labels */}
+                        {(Object.entries(SKILL_BRANCH_CONFIG) as [SkillBranch, typeof SKILL_BRANCH_CONFIG[SkillBranch]][]).map(([branch, config]) => {
+                          const angle = { excavator: 90, vanguard: 162, endurance: 234, mobility: 306, prospector: 18 }[branch] * (Math.PI / 180);
+                          const labelRadius = 180;
+                          return (
+                            <div
+                              key={branch}
+                              className="absolute text-xs font-display tracking-wider whitespace-nowrap"
+                              style={{
+                                left: `calc(50% + ${Math.cos(angle) * labelRadius}px)`,
+                                top: `calc(50% - ${Math.sin(angle) * labelRadius}px)`,
+                                transform: 'translate(-50%, -50%)',
+                                color: config.color
+                              }}
+                            >
+                              {config.icon} {config.name}
+                            </div>
+                          );
+                        })}
+
+                        {/* Skill Nodes */}
+                        {SKILL_TREE_DATA.map(skill => {
+                          const isUnlocked = skillTreeState.unlockedSkills.includes(skill.id);
+                          const isAvailable = canUnlockSkill(skill.id, skillTreeState.unlockedSkills);
+                          const isSelected = selectedSkill === skill.id;
+                          const branchConfig = SKILL_BRANCH_CONFIG[skill.branch];
+
+                          // Node size based on type
+                          const nodeSize = skill.type === 'keystone' ? 36 : skill.type === 'ability' ? 28 : skill.type === 'passive_major' ? 24 : 20;
+
+                          return (
+                            <button
+                              key={skill.id}
+                              onClick={() => setSelectedSkill(skill.id)}
+                              className={`absolute rounded-full transition-all duration-300 flex items-center justify-center
+                                ${isUnlocked ? 'ring-2' : ''}
+                                ${isAvailable && !isUnlocked ? 'animate-pulse cursor-pointer' : ''}
+                                ${!isAvailable && !isUnlocked ? 'opacity-40 grayscale cursor-not-allowed' : 'cursor-pointer'}
+                                ${isSelected ? 'ring-4 ring-white scale-125 z-10' : 'hover:scale-110'}
+                              `}
+                              style={{
+                                left: `calc(50% + ${skill.position.x}px)`,
+                                top: `calc(50% + ${skill.position.y}px)`,
+                                transform: 'translate(-50%, -50%)',
+                                width: nodeSize,
+                                height: nodeSize,
+                                backgroundColor: isUnlocked ? branchConfig.color : `${branchConfig.color}40`,
+                                borderColor: branchConfig.color,
+                                borderWidth: 2,
+                                boxShadow: isUnlocked ? `0 0 12px ${branchConfig.color}` : 'none'
+                              }}
+                              title={skill.name}
+                            >
+                              {skill.type === 'keystone' && <span className="text-xs">K</span>}
+                              {skill.type === 'ability' && <span className="text-xs">A</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Skill Detail Panel */}
+                    <div className="w-72 holo-panel p-4">
+                      {selectedSkill ? (() => {
+                        const skill = getSkillById(selectedSkill);
+                        if (!skill) return null;
+                        const branchConfig = SKILL_BRANCH_CONFIG[skill.branch];
+                        const isUnlocked = skillTreeState.unlockedSkills.includes(skill.id);
+                        const isAvailable = canUnlockSkill(skill.id, skillTreeState.unlockedSkills);
+                        const canAfford = totalShards >= skill.cost;
+
+                        return (
+                          <div>
+                            {/* Header */}
+                            <div className="flex items-center gap-2 mb-3">
+                              <span style={{ color: branchConfig.color }}>{branchConfig.icon}</span>
+                              <span className="text-xs font-mono px-2 py-0.5 rounded" style={{ backgroundColor: `${branchConfig.color}30`, color: branchConfig.color }}>
+                                {branchConfig.name}
+                              </span>
+                              <span className="text-xs text-white/40 font-mono ml-auto">
+                                T{skill.tier} {skill.type.toUpperCase()}
+                              </span>
+                            </div>
+
+                            {/* Name */}
+                            <h3 className="font-display text-lg font-bold mb-2" style={{ color: branchConfig.color }}>
+                              {skill.name}
+                            </h3>
+
+                            {/* Description */}
+                            <p className="text-sm text-white/70 mb-4 font-ui">
+                              {skill.description}
+                            </p>
+
+                            {/* Prerequisites */}
+                            {skill.prerequisites.length > 0 && (
+                              <div className="mb-4">
+                                <div className="text-xs text-white/40 mb-1 font-mono">REQUIRES:</div>
+                                <div className="flex flex-wrap gap-1">
+                                  {skill.prerequisites.map(prereq => {
+                                    const prereqSkill = getSkillById(prereq);
+                                    const hasPrereq = skillTreeState.unlockedSkills.includes(prereq);
+                                    return (
+                                      <span
+                                        key={prereq}
+                                        className={`text-xs px-2 py-0.5 rounded ${hasPrereq ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}
+                                      >
+                                        {prereqSkill?.name || prereq}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Status / Unlock Button */}
+                            {isUnlocked ? (
+                              <div className="w-full py-3 rounded bg-green-500/20 border border-green-500 text-green-400 text-center font-display tracking-wider">
+                                UNLOCKED
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => unlockSkill(skill.id)}
+                                disabled={!isAvailable || !canAfford}
+                                className={`w-full py-3 rounded font-display tracking-wider transition-all ${
+                                  isAvailable && canAfford
+                                    ? 'border text-white hover:bg-white/10'
+                                    : 'bg-white/5 border border-white/10 text-white/30 cursor-not-allowed'
+                                }`}
+                                style={isAvailable && canAfford ? { borderColor: branchConfig.color, color: branchConfig.color } : {}}
+                              >
+                                {!isAvailable ? 'LOCKED' : `UNLOCK — ${skill.cost} SHARDS`}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })() : (
+                        <div className="text-center text-white/40 py-8">
+                          <div className="text-3xl mb-2">?</div>
+                          <p className="font-ui text-sm">Select a skill node to view details</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Branch Legend */}
+                  <div className="flex justify-center gap-4 mt-4">
+                    {(Object.entries(SKILL_BRANCH_CONFIG) as [SkillBranch, typeof SKILL_BRANCH_CONFIG[SkillBranch]][]).map(([branch, config]) => {
+                      const branchSkills = SKILL_TREE_DATA.filter(s => s.branch === branch);
+                      const unlockedCount = branchSkills.filter(s => skillTreeState.unlockedSkills.includes(s.id)).length;
+                      return (
+                        <div key={branch} className="flex items-center gap-2 text-xs">
+                          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: config.color }} />
+                          <span className="text-white/60">{config.name}</span>
+                          <span className="text-white/40">{unlockedCount}/{branchSkills.length}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Start Button */}
               <button

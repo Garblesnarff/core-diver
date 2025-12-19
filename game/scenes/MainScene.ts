@@ -3,8 +3,9 @@ import { Player } from '../objects/Player';
 import { Boulder } from '../objects/Boulder';
 import { Fygar } from '../objects/Fygar';
 import { SoundManager } from '../utils/SoundManager';
-import { EVENTS, GameStats, TileType, GameState, PlayerUpgrades, PickupType, ActivePickup } from '../../types';
+import { EVENTS, GameStats, TileType, GameState, PlayerUpgrades, PickupType, ActivePickup, SkillTreeState, ComputedPlayerStats } from '../../types';
 import { GAME_CONFIG, COLORS, TILE_SIZE, BIOMES } from '../../constants';
+import { calculatePlayerStats } from '../../utils/calculatePlayerStats';
 
 export class MainScene extends Phaser.Scene {
   cameras!: Phaser.Cameras.Scene2D.CameraManager;
@@ -49,8 +50,23 @@ export class MainScene extends Phaser.Scene {
   private biomeParticleTimer: number = 0;
 
   private upgrades: PlayerUpgrades = { oxygenLevel: 1, drillLevel: 1, speedLevel: 1, visionLevel: 1, armorLevel: 1, efficiencyLevel: 1, shardLevel: 1 };
+  private skillTreeState: SkillTreeState = { unlockedSkills: [], totalSpent: 0 };
+  private computedStats!: ComputedPlayerStats;
   private difficulty: number = 1;
   private soundManager!: SoundManager;
+  private secondWindUsed: boolean = false; // Track if Second Wind has been used this run
+
+  // Skill tree ability cooldowns (in ms, 0 = ready)
+  private abilityCooldowns = {
+    groundSlam: 0,
+    proximityBombs: 0,
+    energyBarrier: 0,
+    grappleHook: 0,
+    resourceBeacon: 0
+  };
+  private activeBombs: Phaser.GameObjects.Sprite[] = [];
+  private activeBarrier: Phaser.GameObjects.Sprite | null = null;
+  private activeBeacon: Phaser.GameObjects.Sprite | null = null;
 
   // Minimap
   private minimapGraphics!: Phaser.GameObjects.Graphics;
@@ -60,18 +76,28 @@ export class MainScene extends Phaser.Scene {
     super('MainScene');
   }
 
-  init(data: { upgrades: PlayerUpgrades, difficulty: number }) {
+  init(data: { upgrades: PlayerUpgrades, difficulty: number, skillTreeState?: SkillTreeState }) {
       if (data.upgrades) this.upgrades = data.upgrades;
       if (data.difficulty) this.difficulty = data.difficulty;
+      if (data.skillTreeState) this.skillTreeState = data.skillTreeState;
+
+      // Calculate computed stats from upgrades + skill tree
+      this.computedStats = calculatePlayerStats(this.upgrades, this.skillTreeState);
+      this.secondWindUsed = false;
   }
 
   create() {
     this.soundManager = new SoundManager();
     this.isGameOver = false;
-    
-    // Apply upgrades
-    const maxO2 = 100 + ((this.upgrades.oxygenLevel - 1) * 25);
-    const maxHealth = 3 + (this.upgrades.armorLevel - 1); // +1 health per armor level
+
+    // Ensure computedStats exists (in case init wasn't called with skillTreeState)
+    if (!this.computedStats) {
+      this.computedStats = calculatePlayerStats(this.upgrades, this.skillTreeState);
+    }
+
+    // Apply computed stats from upgrades + skill tree
+    const maxO2 = this.computedStats.maxOxygen;
+    const maxHealth = this.computedStats.maxHealth;
     const requiredCells = 3;
     this.stats = {
       oxygen: maxO2,
@@ -84,6 +110,11 @@ export class MainScene extends Phaser.Scene {
       powerCellsRequired: requiredCells
     };
     this.artifactLocked = true;
+
+    // Apply skill effects - start with shield if unlocked
+    if (this.computedStats.startWithShield) {
+      this.activePickups.push({ type: PickupType.SHIELD, stacks: 1 });
+    }
 
     this.cameras.main.setBackgroundColor(COLORS.background);
 
@@ -120,18 +151,24 @@ export class MainScene extends Phaser.Scene {
     }
 
     this.player = new Player(this, startX, startY);
-    const speed = GAME_CONFIG.playerSpeed + ((this.upgrades.speedLevel - 1) * 20);
-    this.player.setMoveSpeed(speed);
+    this.player.setMoveSpeed(this.computedStats.moveSpeed);
 
     if ((this.player as any).light) {
-        const radius = 250 + ((this.upgrades.visionLevel - 1) * 50);
-        (this.player as any).light.setIntensity(2.0).setRadius(radius); 
+        (this.player as any).light.setIntensity(2.0).setRadius(this.computedStats.lightRadius);
     }
     
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
 
     // Inputs
     this.input.keyboard!.on('keydown-SPACE', this.fireBeam, this);
+
+    // Skill tree ability inputs
+    this.input.keyboard!.on('keydown-E', this.useGroundSlam, this);
+    this.input.keyboard!.on('keydown-Q', this.useProximityBomb, this);
+    this.input.keyboard!.on('keydown-G', this.useEnergyBarrier, this);
+    this.input.keyboard!.on('keydown-R', this.useGrappleHook, this);
+    this.input.keyboard!.on('keydown-F', this.useResourceBeacon, this);
+
     this.events.on('play-sound', (key: string) => {
         if(key === 'fire') this.soundManager.playShoot();
         if(key === 'dig') this.soundManager.playDig();
@@ -211,6 +248,8 @@ export class MainScene extends Phaser.Scene {
     this.updateEnemies();
     this.updatePickupDurations(delta);
     this.updateMagnetEffect();
+    this.updateAbilityCooldowns(delta);
+    this.updateAbilityEffects(delta);
     this.boulders.children.iterate((b) => {
       if (b && b.active) (b as Boulder).update(time, delta, this.layer);
       return true;
@@ -219,7 +258,7 @@ export class MainScene extends Phaser.Scene {
       if (f && f.active) (f as Fygar).update(time, delta);
       return true;
     });
-    
+
     const currentDepth = Math.floor(this.player.y / TILE_SIZE);
     if (currentDepth !== this.stats.depth) {
         this.stats.depth = currentDepth;
@@ -520,8 +559,8 @@ export class MainScene extends Phaser.Scene {
   private tickOxygen() {
     if (this.isGameOver) return;
     if (this.stats.oxygen > 0) {
-        // Efficiency reduces O2 drain by 10% per level
-        const efficiencyMult = 1 - ((this.upgrades.efficiencyLevel - 1) * 0.1);
+        // Use computed O2 consumption multiplier (includes skill tree bonuses)
+        const efficiencyMult = this.computedStats.o2ConsumptionMultiplier;
 
         // Biome modifier for O2 drain
         let biomeMult = 1.0;
@@ -534,10 +573,19 @@ export class MainScene extends Phaser.Scene {
             break;
         }
 
-        this.stats.oxygen -= GAME_CONFIG.oxygenDepletionRate * 2 * Math.max(0.3, efficiencyMult) * biomeMult;
+        this.stats.oxygen -= GAME_CONFIG.oxygenDepletionRate * 2 * efficiencyMult * biomeMult;
         if (this.stats.oxygen <= 0) {
-            this.stats.oxygen = 0;
-            this.handleDeath("Asphyxiation");
+            // Second Wind skill: restore to 30% instead of dying (once per run)
+            if (this.computedStats.hasSecondWind && !this.secondWindUsed) {
+                this.secondWindUsed = true;
+                this.stats.oxygen = this.stats.maxOxygen * 0.3;
+                // Visual feedback for Second Wind activation
+                this.cameras.main.flash(500, 100, 200, 255);
+                this.soundManager.playCollect();
+            } else {
+                this.stats.oxygen = 0;
+                this.handleDeath("Asphyxiation");
+            }
         }
         this.updateReactStats();
     }
@@ -906,16 +954,15 @@ export class MainScene extends Phaser.Scene {
           ...this.stats,
           activePickups: this.activePickups,
           dashCooldown,
-          currentBiome: this.currentBiome
+          currentBiome: this.currentBiome,
+          abilityCooldowns: this.getAbilityCooldowns()
         }
       }));
   }
 
   private calculateShards(base: number): number {
-      // Apply drill level multiplier and shard bonus
-      const drillMult = this.upgrades.drillLevel;
-      const shardBonus = 1 + ((this.upgrades.shardLevel - 1) * 0.15); // +15% per level
-      return Math.floor(base * drillMult * shardBonus);
+      // Use computed shard multiplier (includes drill, shard level, and skill tree bonuses)
+      return Math.floor(base * this.computedStats.shardMultiplier);
   }
 
   private updatePickupDurations(delta: number) {
@@ -970,7 +1017,7 @@ export class MainScene extends Phaser.Scene {
     }
 
     // Apply biome-specific gameplay modifiers
-    const baseSpeed = GAME_CONFIG.playerSpeed + ((this.upgrades.speedLevel - 1) * 20);
+    const baseSpeed = this.computedStats.moveSpeed;
 
     switch (biome.name) {
       case 'FROZEN DEPTHS':
@@ -1144,5 +1191,454 @@ export class MainScene extends Phaser.Scene {
         ease: 'Sine.easeInOut'
       });
     }
+  }
+
+  // ==================== SKILL TREE ABILITIES ====================
+
+  private updateAbilityCooldowns(delta: number) {
+    // Reduce all cooldowns by delta time
+    for (const key of Object.keys(this.abilityCooldowns) as (keyof typeof this.abilityCooldowns)[]) {
+      if (this.abilityCooldowns[key] > 0) {
+        this.abilityCooldowns[key] = Math.max(0, this.abilityCooldowns[key] - delta);
+      }
+    }
+  }
+
+  private updateAbilityEffects(delta: number) {
+    // Update proximity bombs
+    for (let i = this.activeBombs.length - 1; i >= 0; i--) {
+      const bomb = this.activeBombs[i];
+      if (!bomb.active) {
+        this.activeBombs.splice(i, 1);
+        continue;
+      }
+
+      // Check for enemy proximity
+      let shouldExplode = false;
+      const bombX = bomb.x;
+      const bombY = bomb.y;
+
+      this.enemies.children.iterate((e) => {
+        const enemy = e as Phaser.Physics.Arcade.Sprite;
+        if (enemy.active) {
+          const dist = Phaser.Math.Distance.Between(bombX, bombY, enemy.x, enemy.y);
+          if (dist < 40) shouldExplode = true;
+        }
+        return true;
+      });
+
+      this.fygars.children.iterate((f) => {
+        const fygar = f as Phaser.Physics.Arcade.Sprite;
+        if (fygar.active) {
+          const dist = Phaser.Math.Distance.Between(bombX, bombY, fygar.x, fygar.y);
+          if (dist < 40) shouldExplode = true;
+        }
+        return true;
+      });
+
+      // Timer-based explosion (2 seconds)
+      const timer = bomb.getData('timer') - delta;
+      bomb.setData('timer', timer);
+      if (timer <= 0) shouldExplode = true;
+
+      if (shouldExplode) {
+        this.explodeBomb(bomb);
+        this.activeBombs.splice(i, 1);
+      }
+    }
+
+    // Update resource beacon collection
+    if (this.activeBeacon && this.activeBeacon.active) {
+      const beaconTimer = this.activeBeacon.getData('timer') - delta;
+      this.activeBeacon.setData('timer', beaconTimer);
+
+      if (beaconTimer <= 0) {
+        this.activeBeacon.destroy();
+        this.activeBeacon = null;
+      } else {
+        // Auto-collect resources in radius
+        this.collectResourcesInRadius(this.activeBeacon.x, this.activeBeacon.y, 4 * TILE_SIZE);
+      }
+    }
+
+    // Update energy barrier
+    if (this.activeBarrier && this.activeBarrier.active) {
+      const barrierTimer = this.activeBarrier.getData('timer') - delta;
+      this.activeBarrier.setData('timer', barrierTimer);
+
+      if (barrierTimer <= 0) {
+        this.activeBarrier.destroy();
+        this.activeBarrier = null;
+      }
+    }
+  }
+
+  // GROUND SLAM - [E] Destroys tiles in 2-tile radius
+  private useGroundSlam() {
+    if (!this.computedStats.hasGroundSlam) return;
+    if (this.abilityCooldowns.groundSlam > 0) return;
+
+    const cooldownMs = 8000; // 8 seconds
+    this.abilityCooldowns.groundSlam = cooldownMs;
+
+    const playerTileX = Math.floor(this.player.x / TILE_SIZE);
+    const playerTileY = Math.floor(this.player.y / TILE_SIZE);
+    const radius = 2;
+
+    // Screen shake and flash
+    this.cameras.main.shake(200, 0.02);
+    this.cameras.main.flash(100, 255, 100, 50);
+    this.soundManager.playBoulderLand();
+
+    // Destroy tiles in radius
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dy = -radius; dy <= radius; dy++) {
+        if (dx * dx + dy * dy <= radius * radius) {
+          const tileX = playerTileX + dx;
+          const tileY = playerTileY + dy;
+          const tile = this.layer.getTileAt(tileX, tileY);
+
+          if (tile && tile.index !== TileType.BEDROCK) {
+            // Create destruction particles
+            const worldX = tileX * TILE_SIZE + TILE_SIZE / 2;
+            const worldY = tileY * TILE_SIZE + TILE_SIZE / 2;
+
+            this.add.particles(worldX, worldY, 'particle', {
+              speed: { min: 50, max: 150 },
+              angle: { min: 0, max: 360 },
+              scale: { start: 0.5, end: 0 },
+              lifespan: 400,
+              tint: 0xf472b6, // Pink for excavator
+              quantity: 3
+            }).explode(3);
+
+            // Give resources for ore tiles
+            if (tile.index === TileType.ORE_COPPER || tile.index === TileType.ORE_LITHIUM) {
+              this.stats.resources.shards += this.calculateShards(5);
+              this.stats.resources.minerals++;
+            }
+
+            this.layer.removeTileAt(tileX, tileY);
+          }
+        }
+      }
+    }
+
+    // Damage enemies in radius
+    const worldRadius = radius * TILE_SIZE;
+    this.enemies.children.iterate((e) => {
+      const enemy = e as Phaser.Physics.Arcade.Sprite;
+      if (enemy.active) {
+        const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, enemy.x, enemy.y);
+        if (dist < worldRadius) {
+          enemy.destroy();
+          this.stats.resources.shards += this.calculateShards(10);
+        }
+      }
+      return true;
+    });
+
+    this.fygars.children.iterate((f) => {
+      const fygar = f as Phaser.Physics.Arcade.Sprite;
+      if (fygar.active) {
+        const dist = Phaser.Math.Distance.Between(this.player.x, this.player.y, fygar.x, fygar.y);
+        if (dist < worldRadius) {
+          fygar.destroy();
+          this.stats.resources.shards += this.calculateShards(25);
+        }
+      }
+      return true;
+    });
+
+    this.updateReactStats();
+  }
+
+  // PROXIMITY BOMBS - [Q] Drop a bomb that detonates on contact or after 2s
+  private useProximityBomb() {
+    if (!this.computedStats.hasProximityBombs) return;
+    if (this.abilityCooldowns.proximityBombs > 0) return;
+    if (this.activeBombs.length >= 3) return; // Max 3 active bombs
+
+    const cooldownMs = 2000; // 2 seconds between drops
+    this.abilityCooldowns.proximityBombs = cooldownMs;
+
+    // Create bomb sprite
+    const bomb = this.add.sprite(this.player.x, this.player.y, 'particle');
+    bomb.setScale(1.5);
+    bomb.setTint(0xef4444); // Red for vanguard
+    bomb.setData('timer', 2000); // 2 second fuse
+
+    // Pulsing animation
+    this.tweens.add({
+      targets: bomb,
+      scale: { from: 1.2, to: 1.8 },
+      duration: 200,
+      yoyo: true,
+      repeat: -1
+    });
+
+    this.activeBombs.push(bomb);
+    this.soundManager.playDig();
+  }
+
+  private explodeBomb(bomb: Phaser.GameObjects.Sprite) {
+    const bombX = bomb.x;
+    const bombY = bomb.y;
+    const radius = 1.5 * TILE_SIZE;
+
+    // Explosion effect
+    this.cameras.main.shake(100, 0.01);
+    this.add.particles(bombX, bombY, 'particle', {
+      speed: { min: 100, max: 200 },
+      angle: { min: 0, max: 360 },
+      scale: { start: 0.8, end: 0 },
+      lifespan: 300,
+      tint: [0xef4444, 0xfbbf24, 0xffffff],
+      quantity: 15
+    }).explode(15);
+
+    this.soundManager.playBoulderLand();
+
+    // Damage enemies in radius
+    this.enemies.children.iterate((e) => {
+      const enemy = e as Phaser.Physics.Arcade.Sprite;
+      if (enemy.active) {
+        const dist = Phaser.Math.Distance.Between(bombX, bombY, enemy.x, enemy.y);
+        if (dist < radius) {
+          enemy.destroy();
+          this.stats.resources.shards += this.calculateShards(10);
+        }
+      }
+      return true;
+    });
+
+    this.fygars.children.iterate((f) => {
+      const fygar = f as Phaser.Physics.Arcade.Sprite;
+      if (fygar.active) {
+        const dist = Phaser.Math.Distance.Between(bombX, bombY, fygar.x, fygar.y);
+        if (dist < radius) {
+          fygar.destroy();
+          this.stats.resources.shards += this.calculateShards(25);
+        }
+      }
+      return true;
+    });
+
+    // Destroy tiles in radius
+    const tileCenterX = Math.floor(bombX / TILE_SIZE);
+    const tileCenterY = Math.floor(bombY / TILE_SIZE);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const tile = this.layer.getTileAt(tileCenterX + dx, tileCenterY + dy);
+        if (tile && tile.index !== TileType.BEDROCK && tile.index !== TileType.STONE) {
+          this.layer.removeTileAt(tileCenterX + dx, tileCenterY + dy);
+        }
+      }
+    }
+
+    bomb.destroy();
+    this.updateReactStats();
+  }
+
+  // ENERGY BARRIER - [G] Deploy a shield that blocks projectiles
+  private useEnergyBarrier() {
+    if (!this.computedStats.hasEnergyBarrier) return;
+    if (this.abilityCooldowns.energyBarrier > 0) return;
+    if (this.activeBarrier) return; // Only one at a time
+
+    const cooldownMs = 12000; // 12 seconds
+    this.abilityCooldowns.energyBarrier = cooldownMs;
+
+    // Create barrier sprite
+    const barrier = this.add.sprite(this.player.x, this.player.y, 'particle');
+    barrier.setScale(4);
+    barrier.setTint(0x4ade80); // Green for endurance
+    barrier.setAlpha(0.6);
+    barrier.setData('timer', 5000); // 5 seconds duration
+
+    // Add a light to the barrier
+    const barrierLight = this.lights.addLight(barrier.x, barrier.y, 100, 0x4ade80, 1);
+    barrier.setData('light', barrierLight);
+
+    // Pulsing animation
+    this.tweens.add({
+      targets: barrier,
+      alpha: { from: 0.4, to: 0.8 },
+      scale: { from: 3.5, to: 4.5 },
+      duration: 500,
+      yoyo: true,
+      repeat: -1
+    });
+
+    this.activeBarrier = barrier;
+    this.soundManager.playCollect();
+
+    // Add overlap detection with fire breath projectiles
+    // The barrier will be used in handlePlayerHit to block damage
+  }
+
+  // GRAPPLE HOOK - [R] Pull to solid surfaces
+  private useGrappleHook() {
+    if (!this.computedStats.hasGrappleHook) return;
+    if (this.abilityCooldowns.grappleHook > 0) return;
+
+    const cooldownMs = 5000; // 5 seconds
+
+    // Find nearest solid tile in facing direction
+    const facing = this.player.lastFacing || 'right';
+
+    let dirX = 0, dirY = 0;
+    switch (facing) {
+      case 'left': dirX = -1; break;
+      case 'right': dirX = 1; break;
+      case 'up': dirY = -1; break;
+      case 'down': dirY = 1; break;
+    }
+
+    // Raycast to find solid tile
+    const maxRange = 8; // tiles
+    let targetX = this.player.x;
+    let targetY = this.player.y;
+    let foundTarget = false;
+
+    for (let i = 1; i <= maxRange; i++) {
+      const checkX = Math.floor(this.player.x / TILE_SIZE) + dirX * i;
+      const checkY = Math.floor(this.player.y / TILE_SIZE) + dirY * i;
+      const tile = this.layer.getTileAt(checkX, checkY);
+
+      if (tile && tile.index !== -1) {
+        // Found solid tile, target the space just before it
+        targetX = (checkX - dirX * 0.5) * TILE_SIZE + TILE_SIZE / 2;
+        targetY = (checkY - dirY * 0.5) * TILE_SIZE + TILE_SIZE / 2;
+        foundTarget = true;
+        break;
+      }
+    }
+
+    if (!foundTarget) return; // No valid target
+
+    this.abilityCooldowns.grappleHook = cooldownMs;
+
+    // Visual grapple line
+    const line = this.add.graphics();
+    line.lineStyle(2, 0xfbbf24, 1);
+    line.beginPath();
+    line.moveTo(this.player.x, this.player.y);
+    line.lineTo(targetX, targetY);
+    line.stroke();
+
+    // Tween player to target
+    this.tweens.add({
+      targets: this.player,
+      x: targetX,
+      y: targetY,
+      duration: 200,
+      ease: 'Power2',
+      onComplete: () => {
+        line.destroy();
+      }
+    });
+
+    this.soundManager.playShoot();
+  }
+
+  // RESOURCE BEACON - [F] Deploy auto-collect beacon
+  private useResourceBeacon() {
+    if (!this.computedStats.hasResourceBeacon) return;
+    if (this.abilityCooldowns.resourceBeacon > 0) return;
+    if (this.activeBeacon) return; // Only one at a time
+
+    const cooldownMs = 30000; // 30 seconds
+    this.abilityCooldowns.resourceBeacon = cooldownMs;
+
+    // Create beacon sprite
+    const beacon = this.add.sprite(this.player.x, this.player.y, 'particle');
+    beacon.setScale(2);
+    beacon.setTint(0x818cf8); // Purple for prospector
+    beacon.setData('timer', 15000); // 15 seconds duration
+
+    // Add a light
+    const beaconLight = this.lights.addLight(beacon.x, beacon.y, 150, 0x818cf8, 1.5);
+    beacon.setData('light', beaconLight);
+
+    // Rotating animation
+    this.tweens.add({
+      targets: beacon,
+      angle: 360,
+      duration: 2000,
+      repeat: -1
+    });
+
+    // Pulsing ring effect
+    this.time.addEvent({
+      delay: 500,
+      repeat: 29, // 15 seconds / 0.5s
+      callback: () => {
+        if (beacon.active) {
+          const ring = this.add.circle(beacon.x, beacon.y, 10, 0x818cf8, 0.5);
+          this.tweens.add({
+            targets: ring,
+            radius: 4 * TILE_SIZE,
+            alpha: 0,
+            duration: 500,
+            onComplete: () => ring.destroy()
+          });
+        }
+      }
+    });
+
+    this.activeBeacon = beacon;
+    this.soundManager.playCollect();
+  }
+
+  private collectResourcesInRadius(x: number, y: number, radius: number) {
+    // Auto-collect nearby ore tiles
+    const centerTileX = Math.floor(x / TILE_SIZE);
+    const centerTileY = Math.floor(y / TILE_SIZE);
+    const tileRadius = Math.ceil(radius / TILE_SIZE);
+
+    for (let dx = -tileRadius; dx <= tileRadius; dx++) {
+      for (let dy = -tileRadius; dy <= tileRadius; dy++) {
+        const dist = Math.sqrt(dx * dx + dy * dy) * TILE_SIZE;
+        if (dist > radius) continue;
+
+        const tileX = centerTileX + dx;
+        const tileY = centerTileY + dy;
+        const tile = this.layer.getTileAt(tileX, tileY);
+
+        if (tile && (tile.index === TileType.ORE_COPPER || tile.index === TileType.ORE_LITHIUM)) {
+          // Auto-collect ore
+          const worldX = tileX * TILE_SIZE + TILE_SIZE / 2;
+          const worldY = tileY * TILE_SIZE + TILE_SIZE / 2;
+
+          this.add.particles(worldX, worldY, 'particle', {
+            moveToX: x,
+            moveToY: y,
+            speed: 150,
+            scale: { start: 0.5, end: 0.1 },
+            lifespan: 300,
+            tint: 0x818cf8,
+            quantity: 3
+          }).explode(3);
+
+          this.stats.resources.shards += this.calculateShards(5);
+          this.stats.resources.minerals++;
+          this.layer.removeTileAt(tileX, tileY);
+        }
+      }
+    }
+
+    this.updateReactStats();
+  }
+
+  // Get ability cooldowns for HUD display
+  public getAbilityCooldowns() {
+    return {
+      groundSlam: { current: this.abilityCooldowns.groundSlam, max: 8000, has: this.computedStats?.hasGroundSlam },
+      proximityBombs: { current: this.abilityCooldowns.proximityBombs, max: 2000, has: this.computedStats?.hasProximityBombs },
+      energyBarrier: { current: this.abilityCooldowns.energyBarrier, max: 12000, has: this.computedStats?.hasEnergyBarrier },
+      grappleHook: { current: this.abilityCooldowns.grappleHook, max: 5000, has: this.computedStats?.hasGrappleHook },
+      resourceBeacon: { current: this.abilityCooldowns.resourceBeacon, max: 30000, has: this.computedStats?.hasResourceBeacon }
+    };
   }
 }

@@ -6,7 +6,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private wasd!: { up: Phaser.Input.Keyboard.Key; down: Phaser.Input.Keyboard.Key; left: Phaser.Input.Keyboard.Key; right: Phaser.Input.Keyboard.Key };
   private shiftKey!: Phaser.Input.Keyboard.Key;
-  private lastFacing: 'left' | 'right' | 'up' | 'down' = 'right';
+  public lastFacing: 'left' | 'right' | 'up' | 'down' = 'right';
   public light: Phaser.GameObjects.Light;
   private moveSpeed: number;
   private _scene: Phaser.Scene; // Explicit scene reference
